@@ -1013,16 +1013,19 @@ function formatTimeAgo($dateString) {
                         $filename = $attachment['name'];
                         $filePath = $attachment['path'] ?? '';
                         $fileSize = $attachment['size'] ?? 0;
-                        
+
                         if (empty($filename)) continue;
-                        
+
+                        // Prepend '../' to make path relative from user/ directory
+                        $fullFilePath = '../' . $filePath;
+
                         $fileExtension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
                         $isImage = in_array($fileExtension, ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']);
                         $safeFilename = strlen($filename) > 20 ? substr($filename, 0, 20) . '...' : $filename;
-                        
+
                         if ($isImage && !empty($filePath)) {
                             echo '<div class="attachment-item">';
-                            echo '<img src="' . htmlspecialchars($filePath) . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($filePath) . '\')">';
+                            echo '<img src="' . htmlspecialchars($fullFilePath) . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($fullFilePath) . '\')">';
                             echo '</div>';
                         } else {
                             $icon = 'fa-file';
@@ -1030,11 +1033,11 @@ function formatTimeAgo($dateString) {
                             elseif (in_array($fileExtension, ['doc', 'docx'])) $icon = 'fa-file-word';
                             elseif (in_array($fileExtension, ['xls', 'xlsx'])) $icon = 'fa-file-excel';
                             elseif (in_array($fileExtension, ['jpg', 'jpeg', 'png', 'gif'])) $icon = 'fa-image';
-                            
+
                             $fileSizeText = $fileSize > 0 ? number_format($fileSize / 1024, 1) . ' KB' : '';
-                            
+
                             echo '<div class="attachment-item">';
-                            echo '<div class="attachment-file" onclick="window.open(\'' . htmlspecialchars($filePath) . '\', \'_blank\')">';
+                            echo '<div class="attachment-file" onclick="window.open(\'' . htmlspecialchars($fullFilePath) . '\', \'_blank\')">';
                             echo '<div class="attachment-file-icon"><i class="fas ' . $icon . '"></i></div>';
                             echo '<div class="attachment-file-name">' . htmlspecialchars($safeFilename) . '</div>';
                             if ($fileSizeText) {

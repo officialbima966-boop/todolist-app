@@ -1,11 +1,14 @@
 <?php
 session_start();
 
-// Cek login - jika belum login, redirect ke login
-if (!isset($_SESSION['admin'])) {
+// Cek login - jika belum login sebagai admin atau user, redirect ke login
+if (!isset($_SESSION['admin']) && !isset($_SESSION['user'])) {
   header("Location: ../auth/login.php");
   exit;
 }
+
+// Tentukan username saat ini (bisa admin atau user)
+$currentUsername = isset($_SESSION['admin']) ? $_SESSION['admin'] : $_SESSION['user'];
 
 // KONEKSI KE DATABASE 'COBA'
 $host = 'localhost';
@@ -254,20 +257,26 @@ $users = getAllUsers($pdo);
     }
 
     body {
-      background: #f8f9fe;
+      background: linear-gradient(180deg, #f0f4ff 0%, #e8f0ff 100%);
       min-height: 100vh;
-      padding-bottom: 90px;
+      padding-bottom: 100px;
       overflow-x: hidden;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 0;
     }
 
     /* Header - SAMA DENGAN TASKS.PHP */
     header {
-      background: linear-gradient(135deg, #4169E1, #1e3a8a);
+      background: linear-gradient(135deg, #4f46e5, #3b82f6);
       color: #fff;
       padding: 20px 15px 25px 15px;
       position: relative;
       border-radius: 0 0 20px 20px;
-      box-shadow: 0 4px 15px rgba(65, 105, 225, 0.2);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
       width: 100%;
     }
 
@@ -275,11 +284,11 @@ $users = getAllUsers($pdo);
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-bottom: 5px;
+      margin-bottom: 18px;
     }
 
     .back-btn {
-      background: rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.2);
       border: none;
       color: white;
       width: 36px;
@@ -289,18 +298,18 @@ $users = getAllUsers($pdo);
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 1rem;
+      font-size: 16px;
       transition: all 0.3s;
       flex-shrink: 0;
     }
 
     .back-btn:hover {
-      background: rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.3);
     }
 
     .header-title {
-      font-size: 1.2rem;
-      font-weight: 600;
+      font-size: 18px;
+      font-weight: 700;
       letter-spacing: 0.3px;
       white-space: nowrap;
       overflow: hidden;
@@ -309,26 +318,25 @@ $users = getAllUsers($pdo);
 
     /* Content - SAMA DENGAN TASKS.PHP */
     .content {
-      padding: 15px;
-      margin-top: -10px;
+      padding: 18px 15px;
     }
 
     /* Search Box - SAMA DENGAN TASKS.PHP */
     .search-box {
       background: white;
-      border-radius: 12px;
-      padding: 12px 15px;
+      border-radius: 14px;
+      padding: 12px 16px;
       display: flex;
       align-items: center;
       gap: 10px;
       margin-bottom: 15px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      border: 1px solid #e8ecf4;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      border: none;
     }
 
     .search-box i {
       color: #9ca3af;
-      font-size: 1rem;
+      font-size: 16px;
       flex-shrink: 0;
     }
 
@@ -336,33 +344,31 @@ $users = getAllUsers($pdo);
       border: none;
       outline: none;
       flex: 1;
-      font-size: 0.9rem;
+      font-size: 14px;
       color: #333;
       width: 100%;
       background: transparent;
     }
 
     .search-box input::placeholder {
-      color: #b0b7c3;
+      color: #c4c8d0;
     }
 
-    /* User Card - DIUBAH AGAR KONSISTEN DENGAN TASK CARD */
+    /* User Card - SAMA DENGAN TASK CARD */
     .user-card {
       background: white;
-      border-radius: 15px;
-      padding: 15px;
-      margin-bottom: 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-      position: relative;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 3px 12px rgba(0,0,0,0.06);
+      border: none;
+      cursor: pointer;
       transition: all 0.3s;
-      border: 1px solid #f0f3f8;
-      width: 100%;
     }
 
     .user-card:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 15px rgba(0,0,0,0.12);
-      border-color: #e0e5ed;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.1);
     }
 
     .user-header {
@@ -411,22 +417,26 @@ $users = getAllUsers($pdo);
     }
 
     .user-name {
-      font-weight: 600;
-      color: #333;
-      margin-bottom: 4px;
-      font-size: 0.95rem;
+      font-weight: 700;
+      color: #1f2937;
+      margin-bottom: 6px;
+      font-size: 15px;
+      line-height: 1.4;
       word-break: break-word;
     }
 
     .user-role {
-      font-size: 0.8rem;
+      font-size: 11px;
+      font-weight: 700;
       color: #666;
       background: #f8faff;
-      padding: 3px 8px;
-      border-radius: 6px;
+      padding: 4px 10px;
+      border-radius: 8px;
       display: inline-block;
       border: 1px solid #e8f0ff;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
+      text-transform: capitalize;
+      letter-spacing: 0.3px;
     }
 
     .user-status {
@@ -794,52 +804,61 @@ $users = getAllUsers($pdo);
       font-size: 1rem;
     }
 
-    /* Bottom Navigation - SAMA DENGAN TASKS.PHP */
+    /* Bottom Navigation */
     .bottom-nav {
       position: fixed;
-      bottom: 10px;
+      bottom: 15px;
       left: 50%;
       transform: translateX(-50%);
       background: #ffffff;
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 4px;
+      gap: 5px;
       width: auto;
       max-width: 95%;
-      padding: 6px 8px;
+      padding: 8px;
       border-radius: 50px;
       box-shadow: 0 4px 15px rgba(0,0,0,0.1);
       z-index: 100;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      white-space: nowrap;
+      border: 1px solid #e5e7eb;
+    }
+
+    .bottom-nav::-webkit-scrollbar {
+      display: none;
     }
 
     .bottom-nav a {
       text-align: center;
-      color: #9ca3af;
+      color: #6b7280;
       text-decoration: none;
       font-weight: 500;
       border-radius: 25px;
-      padding: 9px 16px;
-      font-size: 0.75rem;
+      padding: 10px 18px;
+      font-size: 14px;
       transition: all 0.3s ease;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
       white-space: nowrap;
       flex-shrink: 0;
     }
 
     .bottom-nav a i {
-      font-size: 0.85rem;
+      font-size: 16px;
     }
 
-    .bottom-nav a.active { 
-      background: #4169E1; 
+    .bottom-nav a.active {
+      background: #3550dc;
       color: #fff;
     }
 
     .bottom-nav a:not(.active):hover {
-      color: #4169E1;
+      color: #3550dc;
       background: #f3f4f6;
     }
 
@@ -1022,19 +1041,19 @@ $users = getAllUsers($pdo);
       }
       
       .user-card {
-        padding: 12px;
-        margin-bottom: 10px;
+        padding: 16px;
+        margin-bottom: 14px;
       }
       
       .user-avatar {
-        width: 40px;
-        height: 40px;
-        font-size: 0.9rem;
-        border-width: 2px;
+        width: 50px;
+        height: 50px;
+        font-size: 18px;
+        border-width: 3px;
       }
       
       .user-name {
-        font-size: 0.9rem;
+        font-size: 15px;
       }
       
       .floating-add-btn {
@@ -1075,91 +1094,21 @@ $users = getAllUsers($pdo);
       }
       
       .bottom-nav {
-        bottom: 8px;
-        padding: 5px 6px;
-        gap: 3px;
+        max-width: 96%;
+        padding: 6px;
       }
       
       .bottom-nav a {
-        padding: 7px 12px;
-        font-size: 0.7rem;
-        gap: 4px;
+        padding: 8px 14px;
+        font-size: 12px;
       }
       
       .bottom-nav a i {
-        font-size: 0.8rem;
+        font-size: 16px;
       }
     }
 
-    @media (max-width: 360px) {
-      html {
-        font-size: 13px;
-      }
-      
-      .header-title {
-        font-size: 1rem;
-      }
-      
-      .user-avatar {
-        width: 36px;
-        height: 36px;
-        font-size: 0.85rem;
-      }
-      
-      .user-name {
-        font-size: 0.85rem;
-      }
-      
-      .bottom-nav a {
-        padding: 6px 10px;
-        font-size: 0.65rem;
-      }
-    }
 
-    @media (min-width: 768px) {
-      .content {
-        max-width: 768px;
-        margin: 0 auto;
-      }
-      
-      .bottom-nav {
-        max-width: 768px;
-        padding: 8px 15px;
-      }
-      
-      .bottom-nav a {
-        padding: 10px 20px;
-        font-size: 0.85rem;
-      }
-      
-      .bottom-nav a i {
-        font-size: 1rem;
-      }
-    }
-
-    @media (min-width: 1024px) {
-      body {
-        padding-bottom: 20px;
-      }
-      
-      .floating-add-btn {
-        right: 30px;
-        bottom: 30px;
-        width: 60px;
-        height: 60px;
-        font-size: 1.4rem;
-      }
-      
-      .bottom-nav {
-        bottom: 20px;
-        padding: 10px 20px;
-      }
-      
-      .bottom-nav a {
-        padding: 12px 24px;
-        font-size: 0.9rem;
-      }
-    }
 
     /* Scrollbar Styling - SAMA DENGAN TASKS.PHP */
     ::-webkit-scrollbar {
@@ -1199,25 +1148,25 @@ $users = getAllUsers($pdo);
   </style>
 </head>
 <body>
+  <div class="container">
+    <!-- Header - SAMA DENGAN TASKS.PHP -->
+    <header>
+      <div class="header-content">
+        <button class="back-btn" onclick="window.location.href='dashboard.php'">
+          <i class="fas fa-arrow-left"></i>
+        </button>
+        <div class="header-title">Users</div>
+      </div>
+    </header>
 
-  <!-- Header - SAMA DENGAN TASKS.PHP -->
-  <header>
-    <div class="header-content">
-      <button class="back-btn" onclick="window.location.href='dashboard.php'">
-        <i class="fas fa-arrow-left"></i>
-      </button>
-      <div class="header-title">Users</div>
+    <!-- Success Notification -->
+    <div class="notification" id="successNotification">
+      <i class="fas fa-check-circle"></i>
+      <span id="notificationText">User berhasil ditambahkan!</span>
     </div>
-  </header>
 
-  <!-- Success Notification -->
-  <div class="notification" id="successNotification">
-    <i class="fas fa-check-circle"></i>
-    <span id="notificationText">User berhasil ditambahkan!</span>
-  </div>
-
-  <!-- Content -->
-  <div class="content">
+    <!-- Content -->
+    <div class="content">
     <!-- Search Box -->
     <div class="search-box">
       <i class="fas fa-search"></i>
@@ -1423,30 +1372,28 @@ $users = getAllUsers($pdo);
       </div>
     </div>
   </div>
+  </div>
 
   <!-- Bottom Navigation -->
-  <div class="bottom-nav">
-    <a href="dashboard.php">
-      <i class="fa-solid fa-house"></i>
-      <span>Home</span>
-    </a>
-    <a href="tasks.php">
-      <i class="fa-solid fa-list-check"></i>
-      <span>Tasks</span>
-    </a>
-    <a href="users.php" class="active">
-      <i class="fa-solid fa-user-group"></i>
-      <span>Users</span>
-    </a>
-    <a href="tugas_default.php">
-      <i class="fa-solid fa-clipboard-list"></i>
-      <span>Tugas Default</span>
-    </a>
-    <a href="profile.php">
-      <i class="fa-solid fa-user"></i>
-      <span>Profil</span>
-    </a>
-  </div>
+    <div class="bottom-nav">
+        <a href="dashboard.php">
+            <i class="fa-solid fa-house"></i>
+            <span>Home</span>
+        </a>
+        <a href="tasks.php">
+            <i class="fa-solid fa-list-check"></i>
+            <span>Tasks</span>
+        </a>
+        <a href="users.php" class="active">
+            <i class="fa-solid fa-user-group"></i>
+            <span>Users</span>
+        </a>
+        <a href="profile.php">
+            <i class="fa-solid fa-user"></i>
+            <span>Profil</span>
+        </a>
+    </div>
+
 
   <script>
     // Load users from database

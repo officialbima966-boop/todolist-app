@@ -36,7 +36,7 @@ if (isset($_GET['logout']) && $_GET['logout'] === 'yes') {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Logout | BM Garage</title>
+<title>Logout | Todolist</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
 <style>
 body {
@@ -107,7 +107,7 @@ body {
 <div class="logout-box">
     <div class="icon">&#x21B7;</div>
     <h2>Konfirmasi Logout</h2>
-    <p>Anda akan keluar dari akun BM Garage. Pastikan semua pekerjaan Anda sudah disimpan.</p>
+    <p>Anda akan keluar dari akun Todolist. Pastikan semua pekerjaan Anda sudah disimpan.</p>
     <div>
         <button class="btn btn-cancel" onclick="window.location.href='dashboard.php'">Batal</button>
         <a href="?logout=yes" class="btn btn-logout">Logout</a>

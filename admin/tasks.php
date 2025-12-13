@@ -312,36 +312,46 @@ $usersResult = $mysqli->query($usersQuery);
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Tasks | BM Garage</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <style>
+    /* Reset dan Base Styles */
     * {
-      margin: 0; padding: 0; box-sizing: border-box;
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box;
       font-family: 'Poppins', sans-serif;
+    }
+
+    html {
+      font-size: 16px;
+      -webkit-text-size-adjust: 100%;
     }
 
     body {
       background: #f8f9fe;
       min-height: 100vh;
       padding-bottom: 90px;
+      overflow-x: hidden;
     }
 
     /* Header */
     header {
       background: linear-gradient(135deg, #4169E1, #1e3a8a);
       color: #fff;
-      padding: 20px 20px 30px 20px;
+      padding: 20px 15px 25px 15px;
       position: relative;
-      border-radius: 0 0 25px 25px;
-      box-shadow: 0 4px 20px rgba(65, 105, 225, 0.2);
+      border-radius: 0 0 20px 20px;
+      box-shadow: 0 4px 15px rgba(65, 105, 225, 0.2);
+      width: 100%;
     }
 
     .header-content {
       display: flex;
       align-items: center;
-      gap: 15px;
+      gap: 12px;
       margin-bottom: 5px;
     }
 
@@ -349,15 +359,16 @@ $usersResult = $mysqli->query($usersQuery);
       background: rgba(255, 255, 255, 0.25);
       border: none;
       color: white;
-      width: 38px;
-      height: 38px;
+      width: 36px;
+      height: 36px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 1.1rem;
+      font-size: 1rem;
       transition: all 0.3s;
+      flex-shrink: 0;
     }
 
     .back-btn:hover {
@@ -365,41 +376,47 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .header-title {
-      font-size: 1.4rem;
+      font-size: 1.2rem;
       font-weight: 600;
       letter-spacing: 0.3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     /* Content */
     .content {
-      padding: 20px;
-      margin-top: -15px;
+      padding: 15px;
+      margin-top: -10px;
     }
 
     /* Search Box */
     .search-box {
       background: white;
-      border-radius: 15px;
-      padding: 14px 18px;
+      border-radius: 12px;
+      padding: 12px 15px;
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 18px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+      gap: 10px;
+      margin-bottom: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
       border: 1px solid #e8ecf4;
     }
 
     .search-box i {
       color: #9ca3af;
-      font-size: 1.05rem;
+      font-size: 1rem;
+      flex-shrink: 0;
     }
 
     .search-box input {
       border: none;
       outline: none;
       flex: 1;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       color: #333;
+      width: 100%;
+      background: transparent;
     }
 
     .search-box input::placeholder {
@@ -409,10 +426,11 @@ $usersResult = $mysqli->query($usersQuery);
     /* Filter Tabs */
     .filter-tabs {
       display: flex;
-      gap: 10px;
-      margin-bottom: 22px;
+      gap: 8px;
+      margin-bottom: 18px;
       overflow-x: auto;
       padding-bottom: 5px;
+      -webkit-overflow-scrolling: touch;
     }
 
     .filter-tabs::-webkit-scrollbar {
@@ -420,18 +438,19 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .filter-tab {
-      padding: 10px 20px;
-      border-radius: 25px;
+      padding: 8px 16px;
+      border-radius: 20px;
       border: none;
       background: white;
       color: #4169E1;
       font-weight: 500;
-      font-size: 0.88rem;
+      font-size: 0.82rem;
       cursor: pointer;
       white-space: nowrap;
       transition: all 0.3s;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
       border: 1px solid transparent;
+      flex-shrink: 0;
     }
 
     .filter-tab:hover {
@@ -441,26 +460,27 @@ $usersResult = $mysqli->query($usersQuery);
     .filter-tab.active {
       background: #4169E1;
       color: white;
-      box-shadow: 0 3px 12px rgba(65, 105, 225, 0.3);
+      box-shadow: 0 3px 10px rgba(65, 105, 225, 0.3);
       transform: translateY(-1px);
     }
 
     /* Task Card */
     .task-card {
       background: white;
-      border-radius: 18px;
-      padding: 18px;
-      margin-bottom: 14px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+      border-radius: 15px;
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.07);
       position: relative;
       cursor: pointer;
       transition: all 0.3s;
       border: 1px solid #f0f3f8;
+      width: 100%;
     }
 
     .task-card:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.12);
       border-color: #e0e5ed;
     }
 
@@ -468,14 +488,15 @@ $usersResult = $mysqli->query($usersQuery);
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+      gap: 10px;
     }
 
     .task-category {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #f59e0b;
       font-weight: 600;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       text-transform: capitalize;
       letter-spacing: 0.3px;
     }
@@ -489,22 +510,24 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .task-title {
-      font-size: 1.05rem;
+      font-size: 0.95rem;
       font-weight: 600;
       color: #1f2937;
-      margin-bottom: 12px;
-      line-height: 1.4;
+      margin-bottom: 10px;
+      line-height: 1.3;
+      word-break: break-word;
     }
 
     .task-menu {
       background: none;
       border: none;
       color: #9ca3af;
-      font-size: 1.3rem;
-      cursor: pointer;
-      padding: 5px;
+      font-size: 1.1rem;
+      cursor: pointer !important;
+      padding: 4px;
       position: relative;
       transition: all 0.2s;
+      flex-shrink: 0;
     }
 
     .task-menu:hover {
@@ -521,8 +544,9 @@ $usersResult = $mysqli->query($usersQuery);
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       display: none;
       z-index: 100;
-      min-width: 150px;
+      min-width: 140px;
       overflow: hidden;
+      cursor: pointer;
     }
 
     .task-dropdown-menu.active {
@@ -530,13 +554,13 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .task-dropdown-item {
-      padding: 12px 16px;
-      cursor: pointer;
+      padding: 10px 14px;
+      cursor: pointer !important;
       transition: background 0.2s;
       display: flex;
       align-items: center;
-      gap: 10px;
-      font-size: 0.9rem;
+      gap: 8px;
+      font-size: 0.85rem;
     }
 
     .task-dropdown-item:hover {
@@ -544,7 +568,7 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .task-dropdown-item i {
-      width: 20px;
+      width: 18px;
     }
 
     .task-dropdown-item.delete {
@@ -553,21 +577,21 @@ $usersResult = $mysqli->query($usersQuery);
 
     /* Progress Section */
     .progress-section {
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
 
     .progress-label {
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       color: #6b7280;
       font-weight: 500;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
 
     .progress-bar-container {
-      height: 7px;
+      height: 6px;
       background: #e8ecf4;
       border-radius: 10px;
       overflow: hidden;
@@ -584,7 +608,7 @@ $usersResult = $mysqli->query($usersQuery);
 
     .progress-percentage {
       text-align: right;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       font-weight: 600;
       color: #1f2937;
     }
@@ -593,20 +617,22 @@ $usersResult = $mysqli->query($usersQuery);
     .task-stats {
       display: flex;
       align-items: center;
-      gap: 18px;
+      gap: 12px;
       margin-bottom: 0;
-      padding-top: 12px;
+      padding-top: 10px;
       border-top: 1px solid #f0f3f8;
+      flex-wrap: wrap;
     }
 
     .stat-item {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 0.82rem;
+      gap: 4px;
+      font-size: 0.75rem;
       color: #6b7280;
       cursor: pointer;
       transition: color 0.2s;
+      flex-shrink: 0;
     }
 
     .stat-item:hover {
@@ -614,30 +640,32 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .stat-item i {
-      font-size: 0.95rem;
+      font-size: 0.85rem;
     }
 
     /* Assigned Users */
     .assigned-users {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       margin-left: auto;
+      flex-shrink: 0;
     }
 
     .user-avatar {
-      width: 28px;
-      height: 28px;
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       border: 2px solid white;
-      margin-left: -10px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+      margin-left: -8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.12);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
-      font-size: 0.7rem;
+      font-size: 0.65rem;
       font-weight: 600;
+      flex-shrink: 0;
     }
 
     .user-avatar:first-child {
@@ -663,18 +691,18 @@ $usersResult = $mysqli->query($usersQuery);
     /* Floating Add Button */
     .floating-add-btn {
       position: fixed;
-      right: 20px;
-      bottom: 90px;
+      right: 15px;
+      bottom: 80px;
       background: linear-gradient(135deg, #4169E1, #5b7ff5);
       color: white;
       border: none;
       border-radius: 50%;
-      width: 58px;
-      height: 58px;
+      width: 55px;
+      height: 55px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.4rem;
+      font-size: 1.3rem;
       cursor: pointer;
       box-shadow: 0 6px 20px rgba(65, 105, 225, 0.4);
       z-index: 99;
@@ -719,8 +747,8 @@ $usersResult = $mysqli->query($usersQuery);
       left: 0;
       right: 0;
       background-color: white;
-      border-top-left-radius: 30px;
-      border-top-right-radius: 30px;
+      border-top-left-radius: 25px;
+      border-top-right-radius: 25px;
       width: 100%;
       max-height: 90vh;
       overflow-y: auto;
@@ -731,30 +759,31 @@ $usersResult = $mysqli->query($usersQuery);
     .modal-header {
       background: linear-gradient(135deg, #4169E1, #1e3a8a);
       color: white;
-      padding: 25px 20px;
-      border-top-left-radius: 30px;
-      border-top-right-radius: 30px;
+      padding: 20px 15px;
+      border-top-left-radius: 25px;
+      border-top-right-radius: 25px;
       position: relative;
       text-align: center;
     }
 
     .modal-back-btn {
       position: absolute;
-      left: 15px;
+      left: 12px;
       top: 50%;
       transform: translateY(-50%);
       background: rgba(255, 255, 255, 0.2);
       border: none;
       color: white;
-      width: 40px;
-      height: 40px;
+      width: 38px;
+      height: 38px;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 1.2rem;
+      font-size: 1.1rem;
       transition: all 0.3s;
+      flex-shrink: 0;
     }
 
     .modal-back-btn:hover {
@@ -763,42 +792,43 @@ $usersResult = $mysqli->query($usersQuery);
 
     .modal-header h3 {
       color: white;
-      font-size: 1.3rem;
+      font-size: 1.2rem;
       margin: 0;
       font-weight: 600;
+      padding: 0 40px;
     }
 
     .modal-body {
-      padding: 25px 20px;
+      padding: 20px 15px;
     }
 
     .form-title {
-      font-size: 1.1rem;
+      font-size: 1rem;
       font-weight: 700;
       color: #333;
-      margin-bottom: 25px;
+      margin-bottom: 20px;
     }
 
     .form-group {
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
 
     .form-group label {
       display: block;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       color: #333;
       font-weight: 500;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
     }
 
     .form-group input,
     .form-group select,
     .form-group textarea {
       width: 100%;
-      padding: 14px 16px;
+      padding: 12px 14px;
       border: 1px solid #ddd;
       border-radius: 8px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       background: white;
       transition: all 0.3s;
       font-family: 'Poppins', sans-serif;
@@ -819,7 +849,7 @@ $usersResult = $mysqli->query($usersQuery);
 
     .form-group textarea {
       resize: vertical;
-      min-height: 100px;
+      min-height: 80px;
     }
 
     .date-input-wrapper {
@@ -827,12 +857,12 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .date-input-wrapper input {
-      padding-right: 45px;
+      padding-right: 40px;
     }
 
     .date-input-wrapper i {
       position: absolute;
-      right: 15px;
+      right: 12px;
       top: 50%;
       transform: translateY(-50%);
       color: #666;
@@ -842,7 +872,7 @@ $usersResult = $mysqli->query($usersQuery);
     .form-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 15px;
+      gap: 12px;
     }
 
     .form-row .form-group {
@@ -865,12 +895,12 @@ $usersResult = $mysqli->query($usersQuery);
       background: white;
       border: 1px solid #ddd;
       border-radius: 8px;
-      max-height: 200px;
+      max-height: 180px;
       overflow-y: auto;
       display: none;
       z-index: 10;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-      margin-top: 5px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      margin-top: 4px;
     }
 
     .user-dropdown.active {
@@ -878,12 +908,13 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .user-dropdown-item {
-      padding: 12px 16px;
+      padding: 10px 12px;
       cursor: pointer;
       transition: background 0.2s;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      font-size: 0.85rem;
     }
 
     .user-dropdown-item:hover {
@@ -897,43 +928,45 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .user-dropdown-avatar {
-      width: 30px;
-      height: 30px;
+      width: 28px;
+      height: 28px;
       border-radius: 50%;
       background: linear-gradient(135deg, #667eea, #764ba2);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 600;
+      flex-shrink: 0;
     }
 
     /* Divider */
     .divider {
       height: 1px;
       background: #e5e7eb;
-      margin: 25px 0;
+      margin: 20px 0;
     }
 
     .form-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 15px;
-      margin-top: 30px;
-      padding: 20px;
+      gap: 12px;
+      margin-top: 25px;
+      padding: 15px;
       background: white;
     }
 
     .btn {
-      padding: 15px 30px;
+      padding: 14px 25px;
       border: none;
-      border-radius: 10px;
+      border-radius: 8px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.3s;
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-family: 'Poppins', sans-serif;
+      width: 100%;
     }
 
     .btn-cancel {
@@ -959,69 +992,72 @@ $usersResult = $mysqli->query($usersQuery);
 
     /* Comment Section */
     .comments-section {
-      max-height: 300px;
+      max-height: 250px;
       overflow-y: auto;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
 
     .comment-item {
       background: #f8faff;
-      padding: 12px;
+      padding: 10px;
       border-radius: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
 
     .comment-header {
       display: flex;
       justify-content: space-between;
-      margin-bottom: 5px;
+      margin-bottom: 4px;
     }
 
     .comment-username {
       font-weight: 600;
       color: #4169E1;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
     }
 
     .comment-time {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #9ca3af;
     }
 
     .comment-text {
       color: #333;
-      font-size: 0.9rem;
-      line-height: 1.5;
+      font-size: 0.85rem;
+      line-height: 1.4;
     }
 
     .comment-input-group {
       display: flex;
-      gap: 10px;
-      margin-top: 15px;
+      gap: 8px;
+      margin-top: 12px;
     }
 
     .comment-input-group input {
       flex: 1;
+      padding: 10px 12px;
     }
 
     .comment-input-group button {
-      padding: 14px 20px;
+      padding: 10px 16px;
       background: #4169E1;
       color: white;
       border: none;
       border-radius: 8px;
       cursor: pointer;
       font-weight: 600;
+      font-size: 0.9rem;
+      flex-shrink: 0;
     }
 
     /* Progress Slider */
     .progress-slider {
-      margin-top: 15px;
+      margin-top: 12px;
     }
 
     .progress-slider input[type="range"] {
       width: 100%;
-      height: 8px;
+      height: 6px;
       border-radius: 5px;
       background: #e5e7eb;
       outline: none;
@@ -1031,16 +1067,16 @@ $usersResult = $mysqli->query($usersQuery);
     .progress-slider input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: #4169E1;
       cursor: pointer;
     }
 
     .progress-slider input[type="range"]::-moz-range-thumb {
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: #4169E1;
       cursor: pointer;
@@ -1049,35 +1085,35 @@ $usersResult = $mysqli->query($usersQuery);
     /* No results state */
     .no-results {
       text-align: center;
-      padding: 60px 20px;
+      padding: 50px 15px;
       color: #666;
     }
 
     .no-results i {
-      font-size: 4rem;
+      font-size: 3rem;
       color: #ddd;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
 
     .no-results p {
-      margin-bottom: 15px;
-      font-size: 1.1rem;
+      margin-bottom: 10px;
+      font-size: 1rem;
     }
 
     /* Bottom Navigation */
     .bottom-nav {
       position: fixed;
-      bottom: 20px;
+      bottom: 10px;
       left: 50%;
       transform: translateX(-50%);
       background: #ffffff;
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       width: auto;
-      max-width: 90%;
-      padding: 8px;
+      max-width: 95%;
+      padding: 6px 8px;
       border-radius: 50px;
       box-shadow: 0 4px 15px rgba(0,0,0,0.1);
       z-index: 100;
@@ -1089,17 +1125,18 @@ $usersResult = $mysqli->query($usersQuery);
       text-decoration: none;
       font-weight: 500;
       border-radius: 25px;
-      padding: 11px 20px;
-      font-size: 15px;
+      padding: 9px 16px;
+      font-size: 0.75rem;
       transition: all 0.3s ease;
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
       white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .bottom-nav a i {
-      font-size: 17px;
+      font-size: 0.85rem;
     }
 
     .bottom-nav a.active { 
@@ -1112,43 +1149,24 @@ $usersResult = $mysqli->query($usersQuery);
       background: #f3f4f6;
     }
 
-    /* Responsive untuk mobile */
-    @media (max-width: 480px) {
-      .bottom-nav {
-        bottom: 10px;
-        padding: 6px 8px;
-        gap: 4px;
-      }
-
-      .bottom-nav a {
-        padding: 10px 16px;
-        font-size: 13px;
-        gap: 6px;
-      }
-
-      .bottom-nav a i {
-        font-size: 16px;
-      }
-    }
-
     /* Subtasks Styles */
     .subtasks-section {
-      margin-top: 20px;
+      margin-top: 15px;
     }
     
     .subtask-item {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 12px;
+      gap: 8px;
+      padding: 10px;
       background: #f8faff;
       border-radius: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     
     .subtask-checkbox {
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       border-radius: 4px;
       border: 2px solid #ddd;
       cursor: pointer;
@@ -1156,6 +1174,7 @@ $usersResult = $mysqli->query($usersQuery);
       align-items: center;
       justify-content: center;
       transition: all 0.3s;
+      flex-shrink: 0;
     }
     
     .subtask-checkbox.checked {
@@ -1166,11 +1185,13 @@ $usersResult = $mysqli->query($usersQuery);
     
     .subtask-content {
       flex: 1;
+      min-width: 0;
     }
     
     .subtask-title {
-      font-size: 0.9rem;
-      margin-bottom: 4px;
+      font-size: 0.85rem;
+      margin-bottom: 3px;
+      word-break: break-word;
     }
     
     .subtask-title.completed {
@@ -1179,47 +1200,52 @@ $usersResult = $mysqli->query($usersQuery);
     }
     
     .subtask-assigned {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #6b7280;
       font-style: italic;
     }
     
     .subtask-completed-by {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #10b981;
       font-style: italic;
     }
     
     .add-subtask-form {
       display: flex;
-      gap: 10px;
-      margin-top: 15px;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
     }
     
     .add-subtask-form input {
       flex: 1;
-      padding: 10px 12px;
+      padding: 8px 10px;
       border: 1px solid #ddd;
       border-radius: 8px;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
+      min-width: 150px;
     }
     
     .add-subtask-form button {
-      padding: 10px 15px;
+      padding: 8px 12px;
       background: #4169E1;
       color: white;
       border: none;
       border-radius: 8px;
       cursor: pointer;
+      font-size: 0.85rem;
+      flex-shrink: 0;
     }
     
     .progress-info {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 10px;
-      font-size: 0.85rem;
+      margin-top: 8px;
+      font-size: 0.8rem;
       color: #6b7280;
+      flex-wrap: wrap;
     }
     
     .progress-stats {
@@ -1231,34 +1257,36 @@ $usersResult = $mysqli->query($usersQuery);
     .subtask-input-item {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px;
+      gap: 8px;
+      padding: 8px;
       background: #f8faff;
       border-radius: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     
     .subtask-input-content {
       flex: 1;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
+      flex-wrap: wrap;
     }
     
     .subtask-input-content input {
       flex: 1;
-      padding: 8px 12px;
+      padding: 6px 10px;
       border: 1px solid #ddd;
       border-radius: 6px;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
+      min-width: 150px;
     }
     
     .subtask-assign-select {
-      min-width: 120px;
-      padding: 8px 12px;
+      min-width: 100px;
+      padding: 6px 10px;
       border: 1px solid #ddd;
       border-radius: 6px;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       background: white;
     }
     
@@ -1267,60 +1295,63 @@ $usersResult = $mysqli->query($usersQuery);
       color: white;
       border: none;
       border-radius: 6px;
-      width: 30px;
-      height: 30px;
+      width: 28px;
+      height: 28px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      flex-shrink: 0;
     }
 
     .assignment-badge {
       display: inline-block;
-      padding: 2px 8px;
+      padding: 2px 6px;
       background: #dbeafe;
       color: #1e40af;
-      border-radius: 12px;
-      font-size: 0.7rem;
+      border-radius: 10px;
+      font-size: 0.65rem;
       font-weight: 500;
-      margin-left: 8px;
+      margin-left: 6px;
+      flex-shrink: 0;
     }
 
     .quick-assign-section {
       background: #f0f9ff;
-      padding: 15px;
-      border-radius: 10px;
-      margin-bottom: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
       border: 1px solid #bae6fd;
     }
 
     .quick-assign-title {
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       font-weight: 600;
       color: #0369a1;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     .quick-assign-users {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 6px;
     }
 
     .quick-assign-user {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
+      gap: 5px;
+      padding: 5px 10px;
       background: white;
       border: 1px solid #bae6fd;
       border-radius: 20px;
       cursor: pointer;
       transition: all 0.3s;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
+      flex-shrink: 0;
     }
 
     .quick-assign-user:hover {
@@ -1335,41 +1366,42 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .quick-assign-avatar {
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: linear-gradient(135deg, #667eea, #764ba2);
       display: flex;
       align-items: center;
       justify-content: center;
       color: white;
-      font-size: 0.6rem;
+      font-size: 0.55rem;
       font-weight: 600;
+      flex-shrink: 0;
     }
 
     /* File Upload Styles */
     .file-upload-section {
       background: #f0f9ff;
-      padding: 15px;
-      border-radius: 10px;
-      margin-bottom: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
       border: 1px solid #bae6fd;
     }
 
     .file-upload-title {
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       font-weight: 600;
       color: #0369a1;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     .file-upload-area {
       border: 2px dashed #bae6fd;
       border-radius: 8px;
-      padding: 20px;
+      padding: 15px;
       text-align: center;
       cursor: pointer;
       transition: all 0.3s;
@@ -1387,54 +1419,57 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .file-upload-icon {
-      font-size: 2rem;
+      font-size: 1.5rem;
       color: #4169E1;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
 
     .file-upload-text {
       color: #6b7280;
-      font-size: 0.9rem;
-      margin-bottom: 5px;
+      font-size: 0.85rem;
+      margin-bottom: 4px;
     }
 
     .file-upload-hint {
       color: #9ca3af;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
     }
 
     .file-preview-container {
-      margin-top: 15px;
+      margin-top: 12px;
     }
 
     .file-preview-item {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px;
+      gap: 8px;
+      padding: 8px;
       background: white;
       border: 1px solid #e5e7eb;
       border-radius: 6px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
     .file-preview-icon {
       color: #4169E1;
-      font-size: 1.2rem;
+      font-size: 1rem;
+      flex-shrink: 0;
     }
 
     .file-preview-info {
       flex: 1;
+      min-width: 0;
     }
 
     .file-preview-name {
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       font-weight: 500;
       color: #333;
+      word-break: break-all;
     }
 
     .file-preview-size {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #6b7280;
     }
 
@@ -1443,43 +1478,44 @@ $usersResult = $mysqli->query($usersQuery);
       color: white;
       border: none;
       border-radius: 4px;
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.8rem;
+      font-size: 0.7rem;
+      flex-shrink: 0;
     }
 
-    /* Attachments in detail modal - DIPERBAIKI */
+    /* Attachments in detail modal */
     .attachments-section {
-      margin-top: 20px;
+      margin-top: 15px;
     }
 
     .attachments-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-      gap: 12px;
-      margin-top: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
     }
 
     .attachment-item {
       transition: all 0.2s ease;
-      border-radius: 10px;
+      border-radius: 8px;
       overflow: hidden;
     }
 
     .attachment-item:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
     }
 
     .attachment-image {
       width: 100%;
-      height: 80px;
+      height: 70px;
       object-fit: cover;
-      border-radius: 10px;
+      border-radius: 8px;
     }
 
     .attachment-file {
@@ -1488,12 +1524,12 @@ $usersResult = $mysqli->query($usersQuery);
       align-items: center;
       justify-content: center;
       background: white;
-      border-radius: 10px;
-      padding: 15px;
+      border-radius: 8px;
+      padding: 12px;
       text-align: center;
       border: 1px solid #e5e7eb;
       cursor: pointer;
-      height: 120px;
+      height: 100px;
     }
 
     .attachment-file:hover {
@@ -1502,9 +1538,9 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .attachment-file-icon {
-      font-size: 2rem;
+      font-size: 1.5rem;
       color: #4169E1;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
     .attachment-file-icon .fa-file-pdf {
@@ -1520,20 +1556,20 @@ $usersResult = $mysqli->query($usersQuery);
     }
 
     .attachment-file-name {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: #333;
       word-break: break-all;
-      margin-bottom: 5px;
+      margin-bottom: 4px;
     }
 
     /* Status badge */
     .status-badge {
       display: inline-block;
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: 20px;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 600;
-      margin-bottom: 15px;
+      margin-bottom: 12px;
     }
 
     .status-badge.todo {
@@ -1551,16 +1587,242 @@ $usersResult = $mysqli->query($usersQuery);
       color: #065f46;
     }
 
-    /* Responsive untuk mobile */
+    /* Media Queries for Responsiveness */
     @media (max-width: 480px) {
+      html {
+        font-size: 14px;
+      }
+      
+      header {
+        padding: 15px 12px 20px 12px;
+      }
+      
+      .back-btn {
+        width: 34px;
+        height: 34px;
+        font-size: 0.9rem;
+      }
+      
+      .header-title {
+        font-size: 1.1rem;
+      }
+      
+      .content {
+        padding: 12px;
+      }
+      
+      .search-box {
+        padding: 10px 12px;
+      }
+      
+      .filter-tab {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+      }
+      
+      .task-card {
+        padding: 12px;
+        margin-bottom: 10px;
+      }
+      
+      .task-title {
+        font-size: 0.9rem;
+      }
+      
+      .floating-add-btn {
+        width: 50px;
+        height: 50px;
+        font-size: 1.2rem;
+        right: 12px;
+        bottom: 70px;
+      }
+      
+      .modal-header {
+        padding: 15px 12px;
+      }
+      
+      .modal-header h3 {
+        font-size: 1.1rem;
+        padding: 0 35px;
+      }
+      
+      .modal-body {
+        padding: 15px 12px;
+      }
+      
+      .form-row {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+      
+      .form-actions {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 12px;
+      }
+      
+      .btn {
+        padding: 12px 20px;
+        font-size: 0.9rem;
+      }
+      
+      .bottom-nav {
+        bottom: 8px;
+        padding: 5px 6px;
+        gap: 3px;
+      }
+      
+      .bottom-nav a {
+        padding: 7px 12px;
+        font-size: 0.7rem;
+        gap: 4px;
+      }
+      
+      .bottom-nav a i {
+        font-size: 0.8rem;
+      }
+      
       .attachments-grid {
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
         gap: 8px;
       }
       
       .attachment-file {
-        padding: 10px;
-        height: 100px;
+        padding: 8px;
+        height: 85px;
+      }
+      
+      .attachment-file-icon {
+        font-size: 1.3rem;
+      }
+    }
+
+    @media (max-width: 360px) {
+      html {
+        font-size: 13px;
+      }
+      
+      .header-title {
+        font-size: 1rem;
+      }
+      
+      .filter-tab {
+        padding: 5px 10px;
+        font-size: 0.7rem;
+      }
+      
+      .task-stats {
+        gap: 8px;
+      }
+      
+      .stat-item {
+        font-size: 0.7rem;
+      }
+      
+      .user-avatar {
+        width: 24px;
+        height: 24px;
+        font-size: 0.6rem;
+      }
+      
+      .bottom-nav a {
+        padding: 6px 10px;
+        font-size: 0.65rem;
+      }
+    }
+
+    @media (min-width: 768px) {
+      .content {
+        max-width: 768px;
+        margin: 0 auto;
+      }
+      
+      .bottom-nav {
+        max-width: 768px;
+        padding: 8px 15px;
+      }
+      
+      .bottom-nav a {
+        padding: 10px 20px;
+        font-size: 0.85rem;
+      }
+      
+      .bottom-nav a i {
+        font-size: 1rem;
+      }
+    }
+
+    @media (min-width: 1024px) {
+      body {
+        padding-bottom: 20px;
+      }
+      
+      .floating-add-btn {
+        right: 30px;
+        bottom: 30px;
+        width: 60px;
+        height: 60px;
+        font-size: 1.4rem;
+      }
+      
+      .bottom-nav {
+        bottom: 20px;
+        padding: 10px 20px;
+      }
+      
+      .bottom-nav a {
+        padding: 12px 24px;
+        font-size: 0.9rem;
+      }
+    }
+
+    /* Scrollbar Styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #a1a1a1;
+    }
+
+    /* Touch-friendly improvements */
+    @media (hover: none) and (pointer: coarse) {
+      .task-menu:hover {
+        color: #9ca3af;
+      }
+      
+      .stat-item:hover {
+        color: #6b7280;
+      }
+      
+      .btn:hover {
+        transform: none;
+      }
+      
+      .floating-add-btn:hover {
+        transform: none;
+        box-shadow: 0 6px 20px rgba(65, 105, 225, 0.4);
+      }
+      
+      .quick-assign-user:hover {
+        background: white;
+        border-color: #bae6fd;
+      }
+      
+      .quick-assign-user.selected:hover {
+        background: #4169E1;
+        border-color: #4169E1;
       }
     }
   </style>
@@ -1756,10 +2018,10 @@ $usersResult = $mysqli->query($usersQuery);
       <i class="fa-solid fa-user-group"></i>
       <span>Users</span>
     </a>
-    <a href="tugas_default.php">
-      <i class="fa-solid fa-tasks"></i>
-      <span>Tugas default</span>
-    </a>
+          <a href="tugas_default.php">
+  <i class="fa-solid fa-clipboard-list"></i>
+  <span>Tugas Default</span>
+</a>
     <a href="profile.php">
       <i class="fa-solid fa-user"></i>
       <span>Profil</span>
@@ -2050,6 +2312,19 @@ $usersResult = $mysqli->query($usersQuery);
       });
 
       addTaskForm.addEventListener('submit', handleAddTask);
+      
+      // Close dropdowns when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.task-menu') && !e.target.closest('.task-dropdown-menu')) {
+          document.querySelectorAll('.task-dropdown-menu').forEach(menu => {
+            menu.classList.remove('active');
+          });
+        }
+        
+        if (!e.target.closest('.user-selection') && !e.target.closest('.user-dropdown')) {
+          userDropdown.classList.remove('active');
+        }
+      });
     }
 
     function addSubtaskInput() {
@@ -2245,6 +2520,16 @@ $usersResult = $mysqli->query($usersQuery);
 
     // Initialize the app when DOM is loaded
     document.addEventListener('DOMContentLoaded', initApp);
+    
+    // Handle window resize
+    window.addEventListener('resize', function() {
+      // Re-render tasks on orientation change for better layout
+      if (window.innerWidth <= 480) {
+        document.querySelectorAll('.task-stats').forEach(stats => {
+          stats.style.gap = '8px';
+        });
+      }
+    });
   </script>
-</body>
+</body>    
 </html>

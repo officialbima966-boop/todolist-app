@@ -1,0 +1,91 @@
+✅ SISTEM TUGAS - STATUS KONEKSI
+
+=== ALUR KERJA ===
+
+1. ADMIN MEMBUAT TUGAS
+   - URL: http://localhost/coba/admin/tasks.php
+   - Admin mengisi: Judul, Tanggal, Catatan
+   - Admin memilih pengguna yang akan menerima tugas
+   - Tugas disimpan dengan status dan progress
+
+2. TUGAS OTOMATIS MUNCUL KE USER
+   - User Biasa login: http://localhost/coba/auth/login.php
+   - Dashboard User: http://localhost/coba/user/user_dashboard.php
+   - Semua tugas dari admin muncul di sini
+   - Tersortir: Hari ini, Mendatang, Selesai
+
+3. USER DAPAT MELIHAT DETAIL & SUBTASK
+   - Klik task card → http://localhost/coba/user/user_task.php?id=X
+   - User bisa tandai subtask selesai
+   - Progress task otomatis terupdate
+
+4. HALAMAN HUB TERPUSAT
+   - URL: http://localhost/coba/user/user_task_detail.php
+   - Menampilkan statistik keseluruhan
+   - Link ke semua fitur user dan admin
+   - Akses cepat ke:
+     * Dashboard Tugas
+     * Admin Hub
+     * Buat Tugas Baru (Admin)
+     * Kelola Users (Admin)
+     * Laporan (Admin)
+
+=== DATABASE SCHEMA ===
+
+Tabel: tasks
+- id (int, auto increment)
+- title (varchar) - Nama tugas
+- status (varchar) - todo, progress, completed
+- progress (int) - 0-100%
+- start_date (varchar)
+- end_date (varchar) - Deadline
+- note (text) - Deskripsi
+- assigned_users (text) - Nama user, dipisah koma
+- created_by (varchar) - Username admin pembuat
+- tasks_completed (int) - Subtask yang selesai
+- tasks_total (int) - Total subtask
+- created_at (timestamp)
+
+Tabel: task_subtasks
+- id, task_id, title/subtask_name, assigned_to, is_completed
+
+=== TEST DATA ===
+
+✓ Test task sudah dibuat dengan ID 18
+  - Judul: "Test Task - Harus Muncul di User Dashboard"
+  - Assigned to: aditya, boim
+  - Status: progress (50%)
+
+=== CARA TESTING ===
+
+1. Login sebagai user biasa (misal: aditya / password)
+2. Kunjungi: http://localhost/coba/user/user_dashboard.php
+3. Lihat test task di tab "Hari ini" atau "Mendatang"
+4. Klik task → lihat detail di user_task.php
+5. Klik "Tandai Selesai" untuk subtask (jika ada)
+
+=== NAVIGASI LENGKAP ===
+
+USER DASHBOARD:
+- Home: user/user_dashboard.php (Daftar tugas)
+- Tasks: user/user_tasks.php (Detail semua tugas)
+- Dashboard: user/user_task_detail.php (Hub terpusat)
+- Profile: profile.php (Edit profil)
+
+ADMIN AREA:
+- Create Tasks: admin/tasks.php
+- Manage Users: admin/users.php
+- Dashboard: admin/dashboard.php
+
+=== FILE YANG SUDAH DIPERBAIKI ===
+
+✓ user/user_dashboard.php - Fixed field names (title, end_date)
+✓ user/user_task.php - Fixed field names
+✓ user/user_task_detail.php - NEW: Connection hub page
+✓ test_create_task.php - Verify task creation
+
+=== PERLU DICEK LAGI ===
+
+- Pastikan admin members di admin/tasks.php sudah dengan benar
+- Buat beberapa test tasks dengan assigned users berbeda
+- Test login dengan user berbeda untuk verifikasi

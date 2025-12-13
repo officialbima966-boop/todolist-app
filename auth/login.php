@@ -9,10 +9,17 @@ if (isset($mysqli)) {
   die("❌ Koneksi database tidak ditemukan!");
 }
 
-// Jika sudah login, langsung arahkan ke dashboard
-if (isset($_SESSION['admin'])) {
-  header("Location: ../admin/dashboard.php");
+// Handle logout
+if (isset($_GET['logout'])) {
+  session_destroy();
+  header("Location: login.php");
   exit;
+}
+
+// Jika sudah login, tetap tampilkan form login tapi dengan pesan
+$already_logged_in = false;
+if (isset($_SESSION['admin']) || isset($_SESSION['user'])) {
+  $already_logged_in = true;
 }
 
 $error = "";
@@ -21,35 +28,90 @@ $error = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $username = trim($_POST['username']);
   $password = trim($_POST['password']);
+  $user_type = $_POST['user_type'] ?? 'admin'; // Default ke admin jika tidak ada
 
   // DEBUG: Tampilkan input user
-  error_log("Login attempt - Username: " . $username);
-  error_log("Login attempt - Password: " . $password);
+  error_log("Login attempt - Username: " . $username . ", Type: " . $user_type);
 
-  $query = $conn->prepare("SELECT * FROM admin WHERE username = ? AND password = ?");
-  if (!$query) {
-    die("❌ SQL Error: " . $conn->error);
-  }
+  if ($user_type === 'admin') {
+    // Login sebagai admin - cek tabel admin
+    $query = $conn->prepare("SELECT * FROM admin WHERE username = ? AND password = ?");
+    if (!$query) {
+      die("❌ SQL Error: " . $conn->error);
+    }
 
-  $query->bind_param("ss", $username, $password);
-  $query->execute();
-  $result = $query->get_result();
+    $query->bind_param("ss", $username, $password);
+    $query->execute();
+    $result = $query->get_result();
 
-  // DEBUG: Tampilkan jumlah row
-  error_log("Rows found: " . $result->num_rows);
+    if ($result->num_rows === 1) {
+      $_SESSION['admin'] = $username;
+      header("Location: ../admin/dashboard.php");
+      exit;
+    } else {
+      $error = "❌ Username atau password admin salah!";
+    }
 
-  // DEBUG: Tampilkan semua data admin
-  $debug_query = $conn->query("SELECT username, password FROM admin");
-  while ($row = $debug_query->fetch_assoc()) {
-    error_log("DB Username: '" . $row['username'] . "' | DB Password: '" . $row['password'] . "'");
-  }
-
-  if ($result->num_rows === 1) {
-    $_SESSION['admin'] = $username;
-    header("Location: ../admin/dashboard.php");
-    exit;
+    $query->close();
   } else {
-    $error = "❌ Username atau password salah!";
+    // Login sebagai user biasa - cek tabel users
+    $user_query = $conn->prepare("SELECT id, username, password, role, status FROM users WHERE username = ?");
+    if (!$user_query) {
+      die("❌ SQL Error: " . $conn->error);
+    }
+
+    $user_query->bind_param("s", $username);
+    $user_query->execute();
+    $user_result = $user_query->get_result();
+
+    // DEBUG: Log jumlah hasil query
+    error_log("User login query result count: " . $user_result->num_rows);
+
+    if ($user_result->num_rows === 1) {
+      $user_data = $user_result->fetch_assoc();
+
+      // DEBUG: Log data user yang ditemukan
+      error_log("User found - ID: " . $user_data['id'] . ", Username: " . $user_data['username'] . ", Status: " . $user_data['status'] . ", Role: " . $user_data['role']);
+
+      // Cek status user
+      if ($user_data['status'] !== 'active') {
+        $error = "❌ Akun user tidak aktif!";
+        error_log("User status is not active: " . $user_data['status']);
+      } else {
+        // Verifikasi password untuk user biasa (password di-hash atau plain text)
+        $password_valid = false;
+        if (password_verify($password, $user_data['password'])) {
+            // Password sudah di-hash
+            $password_valid = true;
+        } elseif ($password === $user_data['password']) {
+            // Password disimpan sebagai plain text (untuk backward compatibility)
+            $password_valid = true;
+        }
+
+        if ($password_valid) {
+          $_SESSION['user'] = $username;
+          $_SESSION['user_id'] = $user_data['id'];
+          $_SESSION['user_role'] = $user_data['role'];
+          error_log("User login successful for: " . $username);
+          
+          // Redirect berdasarkan role
+          if ($user_data['role'] === 'admin') {
+            header("Location: ../admin/dashboard.php");
+          } else {
+            header("Location: ../user/dashboard.php");
+          }
+          exit;
+        } else {
+          $error = "❌ Password user salah!";
+          error_log("Password verification failed for user: " . $username);
+        }
+      }
+    } else {
+      $error = "❌ Username user tidak ditemukan!";
+      error_log("User not found in database: " . $username);
+    }
+
+    $user_query->close();
   }
 }
 ?>
@@ -89,6 +151,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       transition: border-color 0.3s;
     }
     .form-group input:focus { border-color: #2455ff; outline: none; }
+    .user-type-options {
+      display: flex;
+      gap: 20px;
+      margin-top: 8px;
+    }
+    .radio-option {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .radio-option input[type="radio"] {
+      margin-right: 8px;
+      accent-color: #2455ff;
+    }
+    .radio-option span {
+      color: #333;
+    }
     .options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; font-size: 14px; }
     .remember-me { display: flex; align-items: center; }
     .remember-me input { margin-right: 8px; }
@@ -114,17 +194,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   </style>
 </head>
 <body>
-  <div class="login-container">
-    <div class="login-header">
-      <h1>Sign In</h1>
-      <p>Please sign in to continue</p>
-    </div>
+    <div class="login-container">
+      <div class="login-header">
+        <h1>Sign In</h1>
+        <p>Please sign in to continue</p>
+        <?php if (isset($_SESSION['user']) || isset($_SESSION['admin'])): ?>
+          <p style="color: #666; font-size: 12px; margin-top: 5px;">
+            Sudah login? <a href="?logout=1" style="color: #2455ff; text-decoration: underline;">Logout dulu</a>
+          </p>
+        <?php endif; ?>
+      </div>
 
     <?php if (!empty($error)): ?>
       <div class="error"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
     <form method="POST" action="">
+      <div class="form-group">
+        <label for="user_type">Tipe User</label>
+        <div class="user-type-options">
+          <label class="radio-option">
+            <input type="radio" name="user_type" value="admin" checked>
+            <span>Admin</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="user_type" value="user">
+            <span>User Biasa</span>
+          </label>
+        </div>
+      </div>
+
       <div class="form-group">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" placeholder="Username" required>

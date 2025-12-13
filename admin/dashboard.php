@@ -649,6 +649,7 @@ $team_members = getTeamMembers($mysqli, $username);
       padding: 20px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.05);
       margin-bottom: 25px;
+      text-align: center;
     }
 
     @media (max-width: 480px) {
@@ -656,6 +657,17 @@ $team_members = getTeamMembers($mysqli, $username);
         padding: 15px;
         margin-bottom: 20px;
       }
+    }
+
+    .task-summary h3 {
+      color: #333;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .task-summary #totalTasks {
+      color: #0038ff;
+      font-weight: 600;
     }
 
     /* ===== STATS GRID RESPONSIVE ===== */
@@ -712,6 +724,7 @@ $team_members = getTeamMembers($mysqli, $username);
       font-size: 1.8rem;
       font-weight: 600;
       margin-bottom: 5px;
+      color: #333;
     }
 
     @media (max-width: 768px) {
@@ -1099,6 +1112,17 @@ $team_members = getTeamMembers($mysqli, $username);
       }
     }
 
+    @media (max-width: 360px) {
+      .bottom-nav {
+        width: 97%;
+        max-width: 97%;
+        gap: 0px;
+        padding: 3px;
+        bottom: 8px;
+        border-radius: 30px;
+      }
+    }
+
     .bottom-nav a {
       text-align: center;
       color: #9ca3af;
@@ -1151,8 +1175,10 @@ $team_members = getTeamMembers($mysqli, $username);
 
     @media (max-width: 360px) {
       .bottom-nav a {
-        padding: 6px 10px;
+        padding: 6px 8px;
         font-size: 10px;
+        gap: 2px;
+        border-radius: 15px;
       }
     }
 
@@ -1175,6 +1201,12 @@ $team_members = getTeamMembers($mysqli, $username);
     @media (max-width: 480px) {
       .bottom-nav a i {
         font-size: 14px;
+      }
+    }
+
+    @media (max-width: 360px) {
+      .bottom-nav a i {
+        font-size: 12px;
       }
     }
 
@@ -1771,6 +1803,25 @@ $team_members = getTeamMembers($mysqli, $username);
 
     .info-item.join-date i {
       color: #4CAF50;
+    }
+
+    /* Style untuk statistik grid sesuai gambar */
+    .stats-grid .stat-card .stat-number {
+      color: #333;
+    }
+    
+    /* Perbaikan tampilan tugas */
+    .task-summary h3 {
+      margin-bottom: 0;
+    }
+    
+    /* Perbaikan teks header */
+    header .profile h2 {
+      color: white;
+    }
+    
+    header .profile p {
+      color: rgba(255, 255, 255, 0.9);
     }
   </style>
 </head>
@@ -2721,7 +2772,7 @@ $team_members = getTeamMembers($mysqli, $username);
         const navLinks = document.querySelectorAll('.bottom-nav a span');
         navLinks.forEach(span => {
           if (span.textContent === 'Tugas default') {
-            span.textContent = 'Tugas';
+            span.textContent = 'Default';
           } else if (span.textContent === 'Profil') {
             span.textContent = 'Profil';
           }
