@@ -14,7 +14,7 @@ if (!isset($_SESSION['admin'])) {
 }
 
 $admin = $_SESSION['admin'];
-$query = $mysqli->query("SELECT * FROM users WHERE username = '$admin'");
+$query = $mysqli->query("SELECT * FROM admin WHERE username = '$admin'");
 $user = $query->fetch_assoc();
 
 // Create tasks table if not exists
@@ -28,6 +28,7 @@ $createTableQuery = "CREATE TABLE IF NOT EXISTS tasks (
     end_date VARCHAR(50),
     note TEXT,
     assigned_users TEXT,
+    subtasks TEXT,
     tasks_completed INT DEFAULT 0,
     tasks_total INT DEFAULT 0,
     comments INT DEFAULT 0,
@@ -81,46 +82,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $attachments = [];
         if (!empty($_FILES['attachments']['name'][0])) {
             $uploadDir = "../uploads/tasks/";
-            
+
             // Create directory if not exists
             if (!file_exists($uploadDir)) {
                 mkdir($uploadDir, 0777, true);
             }
-            
+
             foreach ($_FILES['attachments']['name'] as $key => $name) {
                 if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                     $tempName = $_FILES['attachments']['tmp_name'][$key];
                     $fileExtension = pathinfo($name, PATHINFO_EXTENSION);
                     $fileName = uniqid() . '_' . time() . '.' . $fileExtension;
                     $filePath = $uploadDir . $fileName;
-                    
+
                     if (move_uploaded_file($tempName, $filePath)) {
-                        $attachments[] = $fileName;
+                        $attachments[] = [
+                            'name' => $name,
+                            'path' => $fileName,
+                            'size' => $_FILES['attachments']['size'][$key]
+                        ];
                     }
                 }
             }
         }
-        
-        $attachmentsString = !empty($attachments) ? implode(',', $attachments) : '';
-        
+
+        $attachmentsString = json_encode($attachments);
+
         // Insert main task
-        $sql = "INSERT INTO tasks (title, start_date, end_date, note, assigned_users, attachments, created_by, tasks_total) 
+        $sql = "INSERT INTO tasks (title, start_date, end_date, note, assigned_users, attachments, created_by, tasks_total)
                 VALUES ('$title', '$startDate', '$endDate', '$note', '$assignedUsers', '$attachmentsString', '$admin', " . count($subtasks) . ")";
-        
+
         if ($mysqli->query($sql)) {
             $taskId = $mysqli->insert_id;
-            
+
             // Insert subtasks dengan assign
+            $subtasksJson = [];
             foreach ($subtasks as $index => $subtaskTitle) {
                 $subtaskTitle = $mysqli->real_escape_string($subtaskTitle);
                 $assignedTo = isset($subtaskAssignments[$index]) ? $mysqli->real_escape_string($subtaskAssignments[$index]) : '';
-                
+
                 $mysqli->query("INSERT INTO task_subtasks (task_id, title, assigned_to) VALUES ($taskId, '$subtaskTitle', '$assignedTo')");
+
+                // Build JSON array for tasks.subtasks field
+                $subtasksJson[] = [
+                    'text' => $subtaskTitle,
+                    'assigned' => $assignedTo,
+                    'completed' => false
+                ];
             }
-            
+
+            // Update tasks.subtasks with JSON
+            if (!empty($subtasksJson)) {
+                $subtasksJsonString = $mysqli->real_escape_string(json_encode($subtasksJson));
+                $mysqli->query("UPDATE tasks SET subtasks = '$subtasksJsonString' WHERE id = $taskId");
+            }
+
             echo json_encode(['success' => true, 'message' => 'Task berhasil ditambahkan dan dibagikan ke teman!']);
         } else {
-            echo json_encode(['success' => false, 'message' => 'Gagal menambahkan task']);
+            echo json_encode(['success' => false, 'message' => 'Gagal menambahkan task: ' . $mysqli->error]);
         }
         exit;
     }
@@ -152,25 +171,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     
     if ($_POST['action'] === 'delete_task') {
         $taskId = (int)$_POST['taskId'];
-        
+
         // Delete associated files first
         $taskQuery = $mysqli->query("SELECT attachments FROM tasks WHERE id = $taskId");
         if ($taskQuery->num_rows > 0) {
             $taskData = $taskQuery->fetch_assoc();
             if (!empty($taskData['attachments'])) {
                 $uploadDir = "../uploads/tasks/";
-                $attachments = explode(',', $taskData['attachments']);
-                foreach ($attachments as $filename) {
-                    $filePath = $uploadDir . $filename;
-                    if (file_exists($filePath)) {
-                        unlink($filePath);
+                $attachments = json_decode($taskData['attachments'], true);
+                if (is_array($attachments)) {
+                    foreach ($attachments as $attachment) {
+                        $filePath = $uploadDir . $attachment['path'];
+                        if (file_exists($filePath)) {
+                            unlink($filePath);
+                        }
                     }
                 }
             }
         }
-        
+
         $sql = "DELETE FROM tasks WHERE id = $taskId";
-        
+
         if ($mysqli->query($sql)) {
             echo json_encode(['success' => true]);
         } else {
@@ -288,10 +309,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'assign_subtask') {
         $subtaskId = (int)$_POST['subtaskId'];
         $assignedTo = $mysqli->real_escape_string($_POST['assignedTo']);
-        
+
         $sql = "UPDATE task_subtasks SET assigned_to = '$assignedTo' WHERE id = $subtaskId";
-        
+
         if ($mysqli->query($sql)) {
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false]);
+        }
+        exit;
+    }
+
+    if ($_POST['action'] === 'add_subtask_to_task') {
+        $taskId = (int)$_POST['taskId'];
+        $title = $mysqli->real_escape_string($_POST['title']);
+        $assignedTo = $mysqli->real_escape_string($_POST['assignedTo'] ?? '');
+
+        $sql = "INSERT INTO task_subtasks (task_id, title, assigned_to) VALUES ($taskId, '$title', '$assignedTo')";
+
+        if ($mysqli->query($sql)) {
+            // Update total tasks count
+            $mysqli->query("UPDATE tasks SET tasks_total = tasks_total + 1 WHERE id = $taskId");
             echo json_encode(['success' => true]);
         } else {
             echo json_encode(['success' => false]);
@@ -476,6 +514,7 @@ $usersResult = $mysqli->query($usersQuery);
       transition: all 0.3s;
       border: 1px solid #f0f3f8;
       width: 100%;
+      overflow: visible;
     }
 
     .task-card:hover {
@@ -509,6 +548,10 @@ $usersResult = $mysqli->query($usersQuery);
       color: #10b981;
     }
 
+    .task-category.terlambat {
+      color: #ef4444;
+    }
+
     .task-title {
       font-size: 0.95rem;
       font-weight: 600;
@@ -528,6 +571,15 @@ $usersResult = $mysqli->query($usersQuery);
       position: relative;
       transition: all 0.2s;
       flex-shrink: 0;
+      touch-action: none;
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .task-menu:hover {
@@ -537,16 +589,18 @@ $usersResult = $mysqli->query($usersQuery);
     /* Dropdown Menu */
     .task-dropdown-menu {
       position: absolute;
-      top: 100%;
-      right: 0;
       background: white;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       display: none;
-      z-index: 100;
-      min-width: 140px;
+      z-index: 9999;
+      min-width: 160px;
       overflow: hidden;
       cursor: pointer;
+      top: 100%;
+      right: 0;
+      left: auto;
+      margin-top: 5px;
     }
 
     .task-dropdown-menu.active {
@@ -892,28 +946,38 @@ $usersResult = $mysqli->query($usersQuery);
       top: 100%;
       left: 0;
       right: 0;
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      max-height: 180px;
+      background: rgba(255, 255, 255, 0.98);
+      border: 1px solid rgba(225, 233, 233, 0.8);
+      border-radius: 20px;
+      max-height: 280px;
       overflow-y: auto;
       display: none;
-      z-index: 10;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-      margin-top: 4px;
+      z-index: 1000;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.15), 0 6px 20px rgba(0,0,0,0.08);
+      margin-top: 12px;
+      width: 100%;
+      max-width: 100%;
+      padding: 8px 0;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transform: translateY(-10px);
+      opacity: 0;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .user-dropdown.active {
       display: block;
+      transform: translateY(0);
+      opacity: 1;
     }
 
     .user-dropdown-item {
-      padding: 10px 12px;
+      padding: 8px 12px;
       cursor: pointer;
       transition: background 0.2s;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       font-size: 0.85rem;
     }
 
@@ -2035,6 +2099,13 @@ $usersResult = $mysqli->query($usersQuery);
       if ($tasksResult->num_rows > 0) {
           $tasksResult->data_seek(0);
           while ($row = $tasksResult->fetch_assoc()) {
+              $isOverdue = false;
+              if ($row['end_date'] && $row['status'] !== 'completed') {
+                  $endDate = strtotime($row['end_date']);
+                  $currentDate = strtotime(date('Y-m-d'));
+                  $isOverdue = $currentDate > $endDate;
+              }
+
               $tasksArray[] = [
                   'id' => $row['id'],
                   'title' => $row['title'],
@@ -2047,7 +2118,8 @@ $usersResult = $mysqli->query($usersQuery);
                   'startDate' => $row['start_date'],
                   'endDate' => $row['end_date'],
                   'note' => $row['note'],
-                  'attachments' => $row['attachments']
+                  'attachments' => $row['attachments'],
+                  'isOverdue' => $isOverdue
               ];
           }
       }
@@ -2181,20 +2253,33 @@ $usersResult = $mysqli->query($usersQuery);
       }
 
       tasksContainer.innerHTML = tasksToRender.map(task => {
-        const categoryClass = task.status === 'progress' ? 'sedang' : task.status === 'completed' ? 'selesai' : '';
+        let category = task.category;
+        let categoryClass = '';
+        if (task.isOverdue) {
+          category = 'Terlambat';
+          categoryClass = 'terlambat';
+        } else {
+          categoryClass = task.status === 'progress' ? 'sedang' : task.status === 'completed' ? 'selesai' : '';
+        }
         const assignedUsersArray = task.assignedUsers ? task.assignedUsers.split(',') : [];
         const hasAttachments = task.attachments && task.attachments.trim() !== '';
-        
+
         return `
-        <div class="task-card" onclick="window.location.href='task_detail.php?id=${task.id}'">
+        <div class="task-card ${task.isOverdue ? 'overdue' : ''}" onclick="window.location.href='task_detail.php?id=${task.id}'">
           <div class="task-header">
             <div>
-              <div class="task-category ${categoryClass}">${task.category}</div>
+              <div class="task-category ${categoryClass}">${category}</div>
               <div class="task-title">${task.title}</div>
             </div>
             <button class="task-menu" onclick="event.stopPropagation(); toggleTaskMenu(${task.id})">
               <i class="fas fa-ellipsis-v"></i>
               <div class="task-dropdown-menu" id="menu-${task.id}">
+                <div class="task-dropdown-item" onclick="event.stopPropagation(); window.location.href='task_detail.php?id=${task.id}'">
+                  <i class="fas fa-eye"></i> Lihat Detail
+                </div>
+                <div class="task-dropdown-item" onclick="event.stopPropagation(); window.location.href='edit_task.php?id=${task.id}'">
+                  <i class="fas fa-edit"></i> Edit
+                </div>
                 <div class="task-dropdown-item delete" onclick="event.stopPropagation(); confirmDelete(${task.id})">
                   <i class="fas fa-trash"></i> Hapus
                 </div>
@@ -2277,11 +2362,15 @@ $usersResult = $mysqli->query($usersQuery);
         }
       });
 
+      assignMemberInput.addEventListener('click', () => {
+        userDropdown.classList.toggle('active');
+      });
+
       document.querySelectorAll('.user-dropdown-item').forEach(item => {
         item.addEventListener('click', function() {
           const userId = this.getAttribute('data-user-id');
           const userName = this.getAttribute('data-user-name');
-          
+
           const index = selectedUsers.findIndex(u => u.id === userId);
           if (index > -1) {
             selectedUsers.splice(index, 1);
@@ -2294,8 +2383,9 @@ $usersResult = $mysqli->query($usersQuery);
             const quickUser = document.querySelector(`.quick-assign-user[data-user-id="${userId}"]`);
             if (quickUser) quickUser.classList.add('selected');
           }
-          
+
           updateAssignMemberInput();
+          userDropdown.classList.remove('active');
         });
       });
 
@@ -2475,12 +2565,21 @@ $usersResult = $mysqli->query($usersQuery);
     function toggleTaskMenu(taskId) {
       const menu = document.getElementById('menu-' + taskId);
       const allMenus = document.querySelectorAll('.task-dropdown-menu');
-      
+
       allMenus.forEach(m => {
         if (m !== menu) m.classList.remove('active');
       });
-      
-      menu.classList.toggle('active');
+
+      if (!menu.classList.contains('active')) {
+        menu.classList.add('active');
+      } else {
+        menu.classList.remove('active');
+      }
+    }
+
+    // Edit task function
+    function editTask(taskId) {
+      window.location.href = 'edit_task.php?id=' + taskId;
     }
 
     // Confirm delete

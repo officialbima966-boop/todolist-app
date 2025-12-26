@@ -2043,6 +2043,9 @@ $usersResult = $mysqli->query($usersQuery);
           <button type="button" class="btn btn-secondary" onclick="taskDetailModal.style.display='none'" style="flex: 1; min-width: 120px;">
             Tutup
           </button>
+          <button type="button" class="btn btn-primary" onclick="window.location.href='tasks.php'" style="flex: 1; min-width: 120px;">
+            <i class="fas fa-eye"></i> Lihat di Tasks
+          </button>
           <button type="button" class="btn btn-danger" onclick="showDeleteConfirmation(${task.id})" style="flex: 1; min-width: 120px;">
             <i class="fas fa-trash"></i> Hapus
           </button>

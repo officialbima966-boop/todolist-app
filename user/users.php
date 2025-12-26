@@ -364,6 +364,8 @@ $users = getAllUsers($pdo);
       border: none;
       cursor: pointer;
       transition: all 0.3s;
+      position: relative;
+      z-index: 1;
     }
 
     .user-card:hover {
@@ -484,7 +486,7 @@ $users = getAllUsers($pdo);
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       display: none;
-      z-index: 100;
+      z-index: 9999999;
       min-width: 140px;
       overflow: hidden;
     }

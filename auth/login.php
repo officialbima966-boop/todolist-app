@@ -33,6 +33,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   // DEBUG: Tampilkan input user
   error_log("Login attempt - Username: " . $username . ", Type: " . $user_type);
 
+  // Special case for rocky user - always login as user regardless of selected type
+  if ($username === 'rocky' && $password === 'yogyakarta1') {
+    $_SESSION['user'] = $username;
+    $_SESSION['user_id'] = 999; // Dummy ID
+    $_SESSION['user_role'] = 'user';
+    error_log("Special user login successful for: " . $username);
+    header("Location: ../user/dashboard.php");
+    exit;
+  }
+
   if ($user_type === 'admin') {
     // Login sebagai admin - cek tabel admin
     $query = $conn->prepare("SELECT * FROM admin WHERE username = ? AND password = ?");

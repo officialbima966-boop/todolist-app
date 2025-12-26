@@ -3,12 +3,12 @@ session_start();
 require_once "../inc/koneksi.php";
 
 // Cek login
-if (!isset($_SESSION['user'])) {
+if (!isset($_SESSION['admin'])) {
     header("Location: ../auth/login.php");
     exit;
 }
 
-$username = $_SESSION['user'];
+$username = $_SESSION['admin'];
 $taskId = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
 if ($taskId <= 0) {
@@ -34,6 +34,55 @@ if (!$task) {
 // Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
+    
+    // Polling untuk data real-time
+    if ($_POST['action'] === 'get_task_data') {
+        // Return current task data for polling
+        $currentSubtasks = [];
+        if (!empty($task['subtasks'])) {
+            $currentSubtasks = json_decode($task['subtasks'], true);
+            
+            // Jika decode gagal, format ulang
+            if ($currentSubtasks === null) {
+                $subtasksArray = explode(',', $task['subtasks']);
+                $currentSubtasks = [];
+                foreach ($subtasksArray as $text) {
+                    $text = trim($text);
+                    if (!empty($text)) {
+                        $currentSubtasks[] = [
+                            'text' => $text,
+                            'assigned' => '',
+                            'completed' => false
+                        ];
+                    }
+                }
+            }
+            
+            if (!is_array($currentSubtasks)) {
+                $currentSubtasks = [];
+            }
+        }
+
+        echo json_encode([
+            'success' => true,
+            'task' => [
+                'id' => $task['id'],
+                'title' => $task['title'],
+                'progress' => $task['progress'],
+                'status' => $task['status'],
+                'category' => $task['category'],
+                'subtasks' => $currentSubtasks,
+                'tasks_completed' => $task['tasks_completed'],
+                'tasks_total' => $task['tasks_total'],
+                'note' => $task['note'],
+                'start_date' => $task['start_date'],
+                'end_date' => $task['end_date'],
+                'assigned_users' => $task['assigned_users'],
+                'attachments' => $task['attachments']
+            ]
+        ]);
+        exit;
+    }
     
     if ($_POST['action'] === 'update_progress') {
         $taskId = (int)$_POST['taskId'];
@@ -90,30 +139,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     
     if ($_POST['action'] === 'toggle_subtask') {
         $index = (int)$_POST['index'];
+        $username = $_POST['username'] ?? '';
         $taskId = (int)$_POST['taskId'];
-        
+
         // Get current subtasks
         $taskQuery = $mysqli->query("SELECT subtasks FROM tasks WHERE id = $taskId");
         $taskData = $taskQuery->fetch_assoc();
-        $subtasks = json_decode($taskData['subtasks'], true) ?: [];
-        
-        if (isset($subtasks[$index])) {
-            // Toggle completed status
-            $subtasks[$index]['completed'] = !$subtasks[$index]['completed'];
+        $subtasks = json_decode($taskData['subtasks'], true);
+
+        // Jika decode gagal, format ulang
+        if ($subtasks === null) {
+            $subtasksArray = explode(',', $taskData['subtasks']);
+            $subtasks = [];
+            foreach ($subtasksArray as $text) {
+                $text = trim($text);
+                if (!empty($text)) {
+                    $subtasks[] = [
+                        'text' => $text,
+                        'assigned' => '',
+                        'completed_by' => '',
+                        'completed' => false
+                    ];
+                }
+            }
+        }
+
+        if (!is_array($subtasks)) {
+            $subtasks = [];
+        }
+
+        if (isset($subtasks[$index]) && !empty($username)) {
+            // Initialize completed_by as array
+            if (!isset($subtasks[$index]['completed_by'])) {
+                $subtasks[$index]['completed_by'] = [];
+            } else if (!is_array($subtasks[$index]['completed_by'])) {
+                $completedStr = $subtasks[$index]['completed_by'];
+                $subtasks[$index]['completed_by'] = !empty($completedStr) 
+                    ? array_map('trim', explode(',', $completedStr)) 
+                    : [];
+            }
+
+            // Toggle user completion
+            $completedBy = &$subtasks[$index]['completed_by'];
+            $userIndex = array_search($username, $completedBy);
             
+            if ($userIndex !== false) {
+                // Remove user from completed list
+                array_splice($completedBy, $userIndex, 1);
+            } else {
+                // Add user to completed list
+                $completedBy[] = $username;
+            }
+
+            // Check if all assigned users completed
+            $assignedUsers = [];
+            if (isset($subtasks[$index]['assigned'])) {
+                if (is_array($subtasks[$index]['assigned'])) {
+                    $assignedUsers = $subtasks[$index]['assigned'];
+                } else {
+                    $assignedUsers = array_map('trim', explode(',', $subtasks[$index]['assigned']));
+                }
+            }
+
+            // Subtask is completed only if all assigned users completed
+            $subtasks[$index]['completed'] = count($assignedUsers) > 0 && 
+                count(array_diff($assignedUsers, $completedBy)) === 0;
+
             // Save back to database
             $subtasksJson = json_encode($subtasks);
             $subtasksEncoded = $mysqli->real_escape_string($subtasksJson);
             $mysqli->query("UPDATE tasks SET subtasks = '$subtasksEncoded' WHERE id = $taskId");
-            
+
             // Calculate progress
             $total = count($subtasks);
-            $completed = count(array_filter($subtasks, function($s) { return $s['completed']; }));
+            $completed = count(array_filter($subtasks, function($s) {
+                return isset($s['completed']) ? $s['completed'] : false;
+            }));
             $progress = $total > 0 ? round(($completed / $total) * 100) : 0;
-            
+
             $category = 'Belum Dijalankan';
             $status = 'todo';
-            
+
             if ($progress > 0 && $progress < 100) {
                 $category = 'Sedang Berjalan';
                 $status = 'progress';
@@ -121,13 +227,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $category = 'Selesai';
                 $status = 'completed';
             }
-            
+
             $mysqli->query("UPDATE tasks SET progress = $progress, category = '$category', status = '$status', tasks_completed = $completed, tasks_total = $total WHERE id = $taskId");
-            
+
             echo json_encode([
-                'success' => true, 
-                'progress' => $progress, 
-                'completed' => $completed, 
+                'success' => true,
+                'progress' => $progress,
+                'completed' => $completed,
                 'total' => $total,
                 'subtasks' => $subtasks
             ]);
@@ -137,16 +243,145 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         exit;
     }
 
+    if ($_POST['action'] === 'upload_attachments') {
+        $taskId = (int)$_POST['taskId'];
+        $uploadDir = '/uploads/tasks/';
+
+        // Create directory if it doesn't exist
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
+        }
+
+        $uploadedFiles = [];
+        $errors = [];
+
+        if (isset($_FILES['files'])) {
+            $files = $_FILES['files'];
+
+            // Handle single file upload (files is not an array)
+            if (!is_array($files['name'])) {
+                $files = [
+                    'name' => [$files['name']],
+                    'type' => [$files['type']],
+                    'tmp_name' => [$files['tmp_name']],
+                    'error' => [$files['error']],
+                    'size' => [$files['size']]
+                ];
+            }
+
+            for ($i = 0; $i < count($files['name']); $i++) {
+                $fileName = $files['name'][$i];
+                $fileTmp = $files['tmp_name'][$i];
+                $fileError = $files['error'][$i];
+                $fileSize = $files['size'][$i];
+
+                if ($fileError === UPLOAD_ERR_OK) {
+                    // Generate unique filename
+                    $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                    $uniqueName = uniqid() . '_' . time() . '.' . $fileExtension;
+                    $filePath = $uploadDir . $uniqueName;
+
+                    // Allowed file types
+                    $allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
+                    if (!in_array($fileExtension, $allowedTypes)) {
+                        $errors[] = "File type not allowed: $fileName";
+                        continue;
+                    }
+
+                    // Max file size (10MB)
+                    if ($fileSize > 10 * 1024 * 1024) {
+                        $errors[] = "File too large: $fileName";
+                        continue;
+                    }
+
+                    if (move_uploaded_file($fileTmp, $filePath)) {
+                        $uploadedFiles[] = [
+                            'name' => $fileName,
+                            'path' => 'uploads/tasks/' . $uniqueName,
+                            'size' => $fileSize
+                        ];
+                    } else {
+                        $errors[] = "Failed to upload: $fileName";
+                    }
+                } else {
+                    $errors[] = "Upload error for: $fileName";
+                }
+            }
+        }
+
+        if (!empty($uploadedFiles)) {
+            // Get current attachments
+            $taskQuery = $mysqli->query("SELECT attachments FROM tasks WHERE id = $taskId");
+            $taskData = $taskQuery->fetch_assoc();
+            $currentAttachments = [];
+
+            if (!empty($taskData['attachments'])) {
+                $attachmentsData = json_decode($taskData['attachments'], true);
+
+                if (is_array($attachmentsData) && count($attachmentsData) > 0) {
+                    // JSON format - data lengkap
+                    $currentAttachments = $attachmentsData;
+                } else {
+                    // Format lama - comma separated, convert to array format
+                    $attachments = explode(',', $taskData['attachments']);
+                    $currentAttachments = [];
+                    foreach ($attachments as $filename) {
+                        $filename = trim($filename);
+                        if (!empty($filename)) {
+                            $currentAttachments[] = [
+                                'name' => $filename,
+                                'path' => 'uploads/tasks/' . $filename,
+                                'size' => 0 // Size not available for old format
+                            ];
+                        }
+                    }
+                }
+            }
+
+            // Merge new attachments
+            $allAttachments = array_merge($currentAttachments, $uploadedFiles);
+            $attachmentsJson = json_encode($allAttachments);
+            $attachmentsEncoded = $mysqli->real_escape_string($attachmentsJson);
+
+            $mysqli->query("UPDATE tasks SET attachments = '$attachmentsEncoded' WHERE id = $taskId");
+        }
+
+        echo json_encode([
+            'success' => empty($errors),
+            'uploaded' => $uploadedFiles,
+            'errors' => $errors
+        ]);
+        exit;
+    }
+
 }
 
 // Get initial comments
 $commentsQuery = "SELECT * FROM task_comments WHERE task_id = $taskId ORDER BY created_at DESC";
 $commentsResult = $mysqli->query($commentsQuery);
 
-// Get initial subtasks from JSON column
+// Get initial subtasks from JSON field (consistent with polling)
 $subtasks = [];
 if (!empty($task['subtasks'])) {
-    $subtasks = json_decode($task['subtasks'], true) ?: [];
+    $subtasksData = json_decode($task['subtasks'], true);
+    
+    // Handle decode errors or old format
+    if ($subtasksData === null) {
+        $subtasksArray = explode(',', $task['subtasks']);
+        $subtasks = [];
+        foreach ($subtasksArray as $text) {
+            $text = trim($text);
+            if (!empty($text)) {
+                $subtasks[] = [
+                    'text' => $text,
+                    'assigned' => '',
+                    'completed' => false
+                ];
+            }
+        }
+    } elseif (is_array($subtasksData)) {
+        $subtasks = $subtasksData;
+    }
 }
 
 function formatTimeAgo($dateString) {
@@ -499,80 +734,83 @@ function formatTimeAgo($dateString) {
         white-space: nowrap;
     }
 
-    /* Subtasks */
+    /* Subtasks - NEW STYLE */
     .subtasks-section {
         margin-bottom: 20px;
     }
 
     .subtask-item {
         display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 12px;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px;
         background: #f8faff;
-        border-radius: 8px;
-        margin-bottom: 10px;
-        border: 1px solid #e0e5ed;
-    }
-
-    .subtask-checkbox {
-        width: 20px;
-        height: 20px;
-        border-radius: 5px;
-        border: 2px solid #ddd;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        border: 2px solid #e0e5ed;
         transition: all 0.3s;
-        flex-shrink: 0;
-        margin-top: 2px;
     }
 
-    .subtask-checkbox.checked {
-        background: #10b981;
-        border-color: #10b981;
-        color: white;
+    .subtask-item:hover {
+        border-color: #C7D2FE;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
 
-    .subtask-content {
-        flex: 1;
-        min-width: 0;
+    .subtask-content-full {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
     }
 
-    .subtask-title {
-        font-size: 14px;
-        font-weight: 500;
-        margin-bottom: 4px;
-        word-break: break-word;
+    .subtask-title-text {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1F2937;
+        transition: all 0.3s;
     }
 
-    .subtask-title.completed {
+    .subtask-title-text.all-completed {
         text-decoration: line-through;
-        color: #9ca3af;
+        color: #9CA3AF;
+        opacity: 0.7;
     }
 
-    .subtask-info {
+    .subtask-users-badges {
         display: flex;
-        gap: 15px;
-        font-size: 12px;
-        color: #6b7280;
         flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
     }
 
-    .subtask-assigned {
-        font-style: italic;
-        display: flex;
+    .user-badge-detail {
+        display: inline-flex;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
+        background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+        color: #4F46E5;
+        padding: 6px 12px;
+        border-radius: 16px;
+        font-size: 13px;
+        font-weight: 600;
+        border: 1.5px solid #C7D2FE;
+        cursor: pointer;
+        transition: all 0.2s;
     }
 
-    .subtask-completed-by {
-        color: #10b981;
-        font-style: italic;
-        display: flex;
-        align-items: center;
-        gap: 4px;
+    .user-badge-detail:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+    }
+
+    .user-badge-detail.completed {
+        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+        color: #059669;
+        border-color: #6EE7B7;
+        text-decoration: line-through;
+    }
+
+    .user-badge-detail.completed i {
+        text-decoration: none;
     }
 
     /* Attachments */
@@ -783,6 +1021,49 @@ function formatTimeAgo($dateString) {
         font-size: 13px;
     }
 
+    /* File Upload */
+    .file-upload-wrapper {
+        border: 2px dashed #d1d5db;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: #f9fafb;
+        margin-top: 15px;
+    }
+
+    .file-upload-wrapper:hover {
+        border-color: #3550dc;
+        background: #f0f4ff;
+    }
+
+    .file-upload-wrapper.dragover {
+        border-color: #3550dc;
+        background: #e8ecf4;
+    }
+
+    .file-upload-icon {
+        font-size: 40px;
+        color: #3550dc;
+        margin-bottom: 10px;
+    }
+
+    .file-upload-text {
+        font-size: 14px;
+        color: #6b7280;
+        margin-bottom: 5px;
+    }
+
+    .file-upload-hint {
+        font-size: 12px;
+        color: #9ca3af;
+    }
+
+    #fileInput {
+        display: none;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
         .container {
@@ -951,22 +1232,72 @@ function formatTimeAgo($dateString) {
             <?php
             if (count($subtasks) > 0) {
                 foreach ($subtasks as $index => $subtask) {
-                    $completedClass = $subtask['completed'] ? 'checked' : '';
-                    $titleClass = $subtask['completed'] ? 'completed' : '';
+                    // Pastikan subtask adalah array dengan format yang benar
+                    if (is_array($subtask)) {
+                        $subtaskText = isset($subtask['text']) ? $subtask['text'] : '';
+                        $completed = isset($subtask['completed']) ? $subtask['completed'] : false;
+                        
+                        // Parse assigned users
+                        $assignedUsers = [];
+                        if (isset($subtask['assigned'])) {
+                            if (is_array($subtask['assigned'])) {
+                                $assignedUsers = $subtask['assigned'];
+                            } else if (!empty($subtask['assigned'])) {
+                                $assignedUsers = explode(',', $subtask['assigned']);
+                            }
+                        }
+                        
+                        // Parse completed_by users
+                        $completedBy = [];
+                        if (isset($subtask['completed_by'])) {
+                            if (is_array($subtask['completed_by'])) {
+                                $completedBy = $subtask['completed_by'];
+                            } else if (!empty($subtask['completed_by'])) {
+                                $completedBy = explode(',', $subtask['completed_by']);
+                            }
+                        }
+                    } else {
+                        // Jika bukan array, anggap sebagai string
+                        $subtaskText = (string)$subtask;
+                        $completed = false;
+                        $assignedUsers = [];
+                        $completedBy = [];
+                    }
+                    
+                    if (empty($subtaskText)) continue;
+                    
+                    // Check if all users completed
+                    $assignedUsersTrimmed = array_map('trim', $assignedUsers);
+                    $completedByTrimmed = array_map('trim', $completedBy);
+                    $assignedUsersTrimmed = array_filter($assignedUsersTrimmed);
+                    $completedByTrimmed = array_filter($completedByTrimmed);
+                    
+                    $allCompleted = count($assignedUsersTrimmed) > 0 && 
+                        count(array_diff($assignedUsersTrimmed, $completedByTrimmed)) === 0;
+                    $titleClass = $allCompleted ? 'subtask-title-text all-completed' : 'subtask-title-text';
                     
                     echo '<div class="subtask-item" data-index="' . $index . '">';
-                    echo '<div class="subtask-checkbox ' . $completedClass . '" onclick="toggleSubtask(' . $index . ')">';
-                    if ($subtask['completed']) {
-                        echo '<i class="fas fa-check" style="font-size: 10px;"></i>';
+                    echo '<div class="subtask-content-full">';
+                    echo '<div class="' . $titleClass . '">' . htmlspecialchars($subtaskText) . '</div>';
+                    
+                    // Display user badges
+                    if (count($assignedUsers) > 0) {
+                        echo '<div class="subtask-users-badges">';
+                        foreach ($assignedUsers as $user) {
+                            $user = trim($user);
+                            if (empty($user)) continue;
+                            
+                            $isCompleted = in_array($user, $completedBy);
+                            $badgeClass = $isCompleted ? 'user-badge-detail completed' : 'user-badge-detail';
+                            $checkIcon = $isCompleted ? '<i class="fas fa-check"></i> ' : '';
+                            
+                            echo '<span class="' . $badgeClass . '" onclick="toggleUserSubtask(' . $index . ', \'' . htmlspecialchars($user) . '\')">';
+                            echo $checkIcon . htmlspecialchars($user);
+                            echo '</span>';
+                        }
+                        echo '</div>';
                     }
-                    echo '</div>';
-                    echo '<div class="subtask-content">';
-                    echo '<div class="subtask-title ' . $titleClass . '">' . htmlspecialchars($subtask['text']) . '</div>';
-                    echo '<div class="subtask-info">';
-                    if (!empty($subtask['assigned'])) {
-                        echo '<span class="subtask-assigned"><i class="fas fa-user-tag"></i> ' . htmlspecialchars($subtask['assigned']) . '</span>';
-                    }
-                    echo '</div>';
+                    
                     echo '</div>';
                     echo '</div>';
                 }
@@ -1013,16 +1344,19 @@ function formatTimeAgo($dateString) {
                         $filename = $attachment['name'];
                         $filePath = $attachment['path'] ?? '';
                         $fileSize = $attachment['size'] ?? 0;
-                        
+
                         if (empty($filename)) continue;
-                        
+
+                        // Prepend '../' to make path relative from admin/ directory
+                        $fullFilePath = '../' . $filePath;
+
                         $fileExtension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
                         $isImage = in_array($fileExtension, ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']);
                         $safeFilename = strlen($filename) > 20 ? substr($filename, 0, 20) . '...' : $filename;
-                        
+
                         if ($isImage && !empty($filePath)) {
                             echo '<div class="attachment-item">';
-                            echo '<img src="' . htmlspecialchars($filePath) . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($filePath) . '\')">';
+                            echo '<img src="' . htmlspecialchars($fullFilePath) . '?t=' . time() . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($fullFilePath) . '?t=' . time() . '\')">';
                             echo '</div>';
                         } else {
                             $icon = 'fa-file';
@@ -1034,7 +1368,7 @@ function formatTimeAgo($dateString) {
                             $fileSizeText = $fileSize > 0 ? number_format($fileSize / 1024, 1) . ' KB' : '';
                             
                             echo '<div class="attachment-item">';
-                            echo '<div class="attachment-file" onclick="window.open(\'' . htmlspecialchars($filePath) . '\', \'_blank\')">';
+                            echo '<div class="attachment-file" onclick="window.open(\'' . htmlspecialchars($fullFilePath) . '\', \'_blank\')">';
                             echo '<div class="attachment-file-icon"><i class="fas ' . $icon . '"></i></div>';
                             echo '<div class="attachment-file-name">' . htmlspecialchars($safeFilename) . '</div>';
                             if ($fileSizeText) {
@@ -1091,6 +1425,16 @@ function formatTimeAgo($dateString) {
             }
             ?>
         </div>
+
+        <!-- File Upload -->
+        <div class="file-upload-wrapper" id="fileUploadWrapper">
+            <div class="file-upload-icon">
+                <i class="fas fa-cloud-upload-alt"></i>
+            </div>
+            <div class="file-upload-text">Klik untuk upload file</div>
+            <div class="file-upload-hint">atau drag & drop file di sini</div>
+        </div>
+        <input type="file" id="fileInput" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx">
     </div>
 
     <!-- Comments -->
@@ -1140,6 +1484,8 @@ function formatTimeAgo($dateString) {
 <script>
     let currentTaskId = <?= $taskId ?>;
     let currentProgress = <?= $task["progress"] ?>;
+    let lastUpdateTime = Date.now();
+    let pollingInterval;
 
     // Progress Slider
     const progressSlider = document.getElementById('progressSlider');
@@ -1252,7 +1598,7 @@ function formatTimeAgo($dateString) {
 
     function renderSubtasks(subtasks) {
         const subtasksSection = document.getElementById('subtasksSection');
-        
+
         if (subtasks.length === 0) {
             subtasksSection.innerHTML = `
                 <div class="no-data">
@@ -1266,25 +1612,53 @@ function formatTimeAgo($dateString) {
 
         const completed = subtasks.filter(st => st.completed).length;
         const total = subtasks.length;
-        
+
         progressStats.textContent = `${completed}/${total} selesai`;
-        
+
         subtasksSection.innerHTML = subtasks.map((subtask, index) => {
-            const completedClass = subtask.completed ? 'checked' : '';
-            const titleClass = subtask.completed ? 'completed' : '';
-            const assigned = subtask.assigned ? 
-                `<span class="subtask-assigned"><i class="fas fa-user-tag"></i> ${subtask.assigned}</span>` : '';
+            // Parse assigned users
+            let assignedUsers = [];
+            if (Array.isArray(subtask.assigned)) {
+                assignedUsers = subtask.assigned.map(u => String(u).trim()).filter(u => u);
+            } else if (subtask.assigned) {
+                assignedUsers = subtask.assigned.split(',').map(u => u.trim()).filter(u => u);
+            }
             
+            // Parse completed_by users
+            let completedBy = [];
+            if (Array.isArray(subtask.completed_by)) {
+                completedBy = subtask.completed_by.map(u => String(u).trim()).filter(u => u);
+            } else if (subtask.completed_by) {
+                completedBy = subtask.completed_by.split(',').map(u => u.trim()).filter(u => u);
+            }
+            
+            // Check if all users completed
+            const allCompleted = assignedUsers.length > 0 && 
+                assignedUsers.every(user => completedBy.includes(user));
+            const titleClass = allCompleted ? 'subtask-title-text all-completed' : 'subtask-title-text';
+            
+            // Generate user badges HTML
+            let userBadgesHtml = '';
+            if (assignedUsers.length > 0) {
+                userBadgesHtml = '<div class="subtask-users-badges">';
+                assignedUsers.forEach(user => {
+                    const isCompleted = completedBy.includes(user);
+                    const badgeClass = isCompleted ? 'user-badge-detail completed' : 'user-badge-detail';
+                    const checkIcon = isCompleted ? '<i class="fas fa-check"></i> ' : '';
+                    userBadgesHtml += `
+                        <span class="${badgeClass}" onclick="toggleUserSubtask(${index}, '${escapeHtml(user)}')">
+                            ${checkIcon}${escapeHtml(user)}
+                        </span>
+                    `;
+                });
+                userBadgesHtml += '</div>';
+            }
+
             return `
                 <div class="subtask-item" data-index="${index}">
-                    <div class="subtask-checkbox ${completedClass}" onclick="toggleSubtask(${index})">
-                        ${subtask.completed ? '<i class="fas fa-check" style="font-size: 10px;"></i>' : ''}
-                    </div>
-                    <div class="subtask-content">
-                        <div class="subtask-title ${titleClass}">${escapeHtml(subtask.text)}</div>
-                        <div class="subtask-info">
-                            ${assigned}
-                        </div>
+                    <div class="subtask-content-full">
+                        <div class="${titleClass}">${escapeHtml(subtask.text)}</div>
+                        ${userBadgesHtml}
                     </div>
                 </div>
             `;
@@ -1297,11 +1671,13 @@ function formatTimeAgo($dateString) {
         return div.innerHTML;
     }
 
-    async function toggleSubtask(index) {
+    // Toggle user completion for subtask
+    async function toggleUserSubtask(index, username) {
         try {
             const formData = new FormData();
             formData.append('action', 'toggle_subtask');
             formData.append('index', index);
+            formData.append('username', username);
             formData.append('taskId', currentTaskId);
 
             const response = await fetch('', {
@@ -1344,6 +1720,226 @@ function formatTimeAgo($dateString) {
     function openImage(imageUrl) {
         window.open(imageUrl, '_blank', 'width=800,height=600');
     }
+
+    // Polling for real-time updates
+    async function pollTaskData() {
+        try {
+            const formData = new FormData();
+            formData.append('action', 'get_task_data');
+            formData.append('taskId', currentTaskId);
+
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                const taskData = result.task;
+
+                // Update progress if changed
+                if (taskData.progress !== currentProgress) {
+                    currentProgress = taskData.progress;
+                    progressSlider.value = currentProgress;
+                    progressBar.style.width = currentProgress + '%';
+                    currentProgressElement.textContent = currentProgress + '%';
+
+                    // Update status badge
+                    statusBadge.textContent = taskData.category;
+                    statusBadge.className = 'status-badge ' + taskData.status;
+                }
+
+                // Update subtasks if changed
+                const newSubtasks = taskData.subtasks;
+                const existingSubtasks = Array.from(document.querySelectorAll('.subtask-item')).map(item => {
+                    const index = parseInt(item.dataset.index);
+                    const title = item.querySelector('.subtask-title-text');
+                    const badges = item.querySelectorAll('.user-badge-detail');
+                    
+                    // Extract user completion data
+                    const assignedUsers = Array.from(badges).map(badge => {
+                        return badge.textContent.trim().replace(/^✔\s*/, '');
+                    });
+                    
+                    const completedBy = Array.from(badges).filter(badge => 
+                        badge.classList.contains('completed')
+                    ).map(badge => badge.textContent.trim().replace(/^✔\s*/, ''));
+                    
+                    const allCompleted = assignedUsers.length > 0 && 
+                        assignedUsers.every(user => completedBy.includes(user));
+                    
+                    return {
+                        text: title ? title.textContent : '',
+                        completed: allCompleted,
+                        assigned: assignedUsers,
+                        completed_by: completedBy
+                    };
+                });
+
+                if (JSON.stringify(newSubtasks) !== JSON.stringify(existingSubtasks)) {
+                    renderSubtasks(newSubtasks);
+                }
+
+                // Update progress stats
+                progressStats.textContent = `${taskData.tasks_completed}/${taskData.tasks_total} selesai`;
+
+                lastUpdateTime = Date.now();
+            }
+        } catch (error) {
+            console.error('Polling error:', error);
+        }
+    }
+
+    function startPolling() {
+        // Poll every 5 seconds
+        pollingInterval = setInterval(pollTaskData, 5000);
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+        }
+    }
+
+    // File Upload Functionality
+    const fileUploadWrapper = document.getElementById('fileUploadWrapper');
+    const fileInput = document.getElementById('fileInput');
+    const attachmentsSection = document.getElementById('attachmentsSection');
+    const attachmentCount = document.getElementById('attachmentCount');
+
+    // Click to upload
+    fileUploadWrapper.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    // Drag and drop
+    fileUploadWrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileUploadWrapper.classList.add('dragover');
+    });
+
+    fileUploadWrapper.addEventListener('dragleave', () => {
+        fileUploadWrapper.classList.remove('dragover');
+    });
+
+    fileUploadWrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileUploadWrapper.classList.remove('dragover');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    async function uploadFiles(files) {
+        const formData = new FormData();
+        formData.append('action', 'upload_attachments');
+        formData.append('taskId', currentTaskId);
+
+        // Handle multiple files
+        for (let i = 0; i < files.length; i++) {
+            formData.append('files[]', files[i]);
+        }
+
+        try {
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                if (result.uploaded && result.uploaded.length > 0) {
+                    // Update attachments section
+                    updateAttachmentsSection(result.uploaded);
+                    alert(`Berhasil upload ${result.uploaded.length} file!`);
+                }
+
+                if (result.errors && result.errors.length > 0) {
+                    alert('Beberapa file gagal diupload:\n' + result.errors.join('\n'));
+                }
+            } else {
+                alert('Gagal upload file: ' + (result.errors ? result.errors.join('\n') : 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            alert('Terjadi kesalahan saat upload file');
+        }
+    }
+
+    function updateAttachmentsSection(newAttachments) {
+        // Get current attachments count
+        let currentCount = parseInt(attachmentCount.textContent) || 0;
+        currentCount += newAttachments.length;
+        attachmentCount.textContent = currentCount;
+
+        // Remove no-data message if exists
+        const noData = attachmentsSection.querySelector('.no-data');
+        if (noData) {
+            noData.remove();
+        }
+
+        // Create or get attachments grid
+        let attachmentsGrid = attachmentsSection.querySelector('.attachments-grid');
+        if (!attachmentsGrid) {
+            attachmentsGrid = document.createElement('div');
+            attachmentsGrid.className = 'attachments-grid';
+            attachmentsSection.appendChild(attachmentsGrid);
+        }
+
+        // Add new attachments
+        newAttachments.forEach(attachment => {
+            const fileExtension = attachment.name.split('.').pop().toLowerCase();
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(fileExtension);
+            const safeFilename = attachment.name.length > 20 ? attachment.name.substring(0, 20) + '...' : attachment.name;
+
+            let attachmentHTML = '';
+
+            if (isImage) {
+                attachmentHTML = `
+                    <div class="attachment-item">
+                        <img src="../${attachment.path}?t=${Date.now()}" alt="${attachment.name}" class="attachment-image" onclick="openImage('../${attachment.path}?t=${Date.now()}')">
+                    </div>
+                `;
+            } else {
+                let icon = 'fa-file';
+                if (fileExtension === 'pdf') icon = 'fa-file-pdf';
+                else if (['doc', 'docx'].includes(fileExtension)) icon = 'fa-file-word';
+                else if (['xls', 'xlsx'].includes(fileExtension)) icon = 'fa-file-excel';
+
+                const fileSizeText = attachment.size > 0 ? (attachment.size / 1024).toFixed(1) + ' KB' : '';
+
+                attachmentHTML = `
+                    <div class="attachment-item">
+                        <div class="attachment-file" onclick="window.open('../${attachment.path}', '_blank')">
+                            <div class="attachment-file-icon"><i class="fas ${icon}"></i></div>
+                            <div class="attachment-file-name">${safeFilename}</div>
+                            <div class="attachment-file-type">${fileSizeText || fileExtension.toUpperCase()}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            attachmentsGrid.insertAdjacentHTML('beforeend', attachmentHTML);
+        });
+    }
+
+    // Start polling when page loads
+    window.addEventListener('load', startPolling);
+
+    // Stop polling when page unloads
+    window.addEventListener('beforeunload', stopPolling);
 </script>
 
 </body>

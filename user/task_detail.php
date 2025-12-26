@@ -2,13 +2,26 @@
 session_start();
 require_once "../inc/koneksi.php";
 
-// Cek login
-if (!isset($_SESSION['user'])) {
+// Load notification handler jika ada (opsional untuk sementara)
+$notificationEnabled = false;
+if (file_exists("../inc/notification_handler.php")) {
+    require_once "../inc/notification_handler.php";
+    $notificationEnabled = true;
+}
+
+// Suppress PHP warnings/notices to prevent JSON corruption
+error_reporting(E_ERROR | E_PARSE);
+ini_set('display_errors', 0);
+
+// Cek login - support untuk user dan admin
+if (!isset($_SESSION['user']) && !isset($_SESSION['admin'])) {
     header("Location: ../auth/login.php");
     exit;
 }
 
-$username = $_SESSION['user'];
+// Ambil username dari session (bisa dari user atau admin)
+$username = isset($_SESSION['user']) ? $_SESSION['user'] : $_SESSION['admin'];
+$isAdmin = isset($_SESSION['admin']);
 $taskId = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
 if ($taskId <= 0) {
@@ -17,7 +30,11 @@ if ($taskId <= 0) {
 }
 
 // Ambil data user yang login
-$userQuery = $mysqli->query("SELECT * FROM users WHERE username = '$username'");
+if ($isAdmin) {
+    $userQuery = $mysqli->query("SELECT * FROM admin WHERE username = '$username'");
+} else {
+    $userQuery = $mysqli->query("SELECT * FROM users WHERE username = '$username'");
+}
 $currentUser = $userQuery->fetch_assoc();
 
 // Ambil data tugas
@@ -30,10 +47,76 @@ if (!$task) {
     echo "<script>alert('Tugas tidak ditemukan'); window.location.href='tasks.php';</script>";
     exit;
 }
+// Validasi akses: user hanya bisa akses task yang dibuat atau di-assign ke mereka
+// Admin bisa akses semua task
+if (!$isAdmin) {
+    $assignedUsers = $task['assigned_users'] ? explode(',', $task['assigned_users']) : [];
+    $hasAccess = ($task['created_by'] === $username) || in_array($username, $assignedUsers);
+    
+    if (!$hasAccess) {
+        echo "<script>alert('Anda tidak memiliki akses ke tugas ini'); window.location.href='tasks.php';</script>";
+        exit;
+    }
+}
 
 // Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    // Clear any previous output and start clean buffer
+    ob_clean();
+    ob_start();
+    
+    // Suppress any PHP errors from showing in JSON response
+    error_reporting(0);
     header('Content-Type: application/json');
+    
+    // Polling untuk data real-time
+    if ($_POST['action'] === 'get_task_data') {
+        // Return current task data for polling
+        $currentSubtasks = [];
+        if (!empty($task['subtasks'])) {
+            $currentSubtasks = json_decode($task['subtasks'], true);
+            
+            // Jika decode gagal, format ulang
+            if ($currentSubtasks === null) {
+                $subtasksArray = explode(',', $task['subtasks']);
+                $currentSubtasks = [];
+                foreach ($subtasksArray as $text) {
+                    $text = trim($text);
+                    if (!empty($text)) {
+                        $currentSubtasks[] = [
+                            'text' => $text,
+                            'assigned' => '',
+                            'completed' => false
+                        ];
+                    }
+                }
+            }
+            
+            if (!is_array($currentSubtasks)) {
+                $currentSubtasks = [];
+            }
+        }
+
+        echo json_encode([
+            'success' => true,
+            'task' => [
+                'id' => $task['id'],
+                'title' => $task['title'],
+                'progress' => $task['progress'],
+                'status' => $task['status'],
+                'category' => $task['category'],
+                'subtasks' => $currentSubtasks,
+                'tasks_completed' => $task['tasks_completed'],
+                'tasks_total' => $task['tasks_total'],
+                'note' => $task['note'],
+                'start_date' => $task['start_date'],
+                'end_date' => $task['end_date'],
+                'assigned_users' => $task['assigned_users'],
+                'attachments' => $task['attachments']
+            ]
+        ]);
+        exit;
+    }
     
     if ($_POST['action'] === 'update_progress') {
         $taskId = (int)$_POST['taskId'];
@@ -75,6 +158,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $newCommentQuery = $mysqli->query("SELECT * FROM task_comments WHERE id = LAST_INSERT_ID()");
             $newComment = $newCommentQuery->fetch_assoc();
             
+            // ========== TAMBAHAN: KIRIM NOTIFIKASI ==========
+            if ($notificationEnabled && function_exists('sendNotification')) {
+                $taskInfoQuery = $mysqli->query("SELECT title FROM tasks WHERE id = $taskId");
+                $taskInfo = $taskInfoQuery->fetch_assoc();
+                $taskTitle = $taskInfo['title'];
+                
+                $message = "$username memberikan komentar di tugas \"$taskTitle\"";
+                sendNotification($mysqli, $taskId, 'comment', $message, $username, $username);
+            }
+            // ========== AKHIR TAMBAHAN NOTIFIKASI ==========
+            
             echo json_encode([
                 'success' => true, 
                 'username' => $username,
@@ -88,32 +182,321 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         exit;
     }
     
-    if ($_POST['action'] === 'toggle_subtask') {
-        $index = (int)$_POST['index'];
+    // ========== TAMBAHAN: GET COMMENTS API ==========
+    if ($_POST['action'] === 'get_comments') {
+        // Clear any previous output
+        if (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        ob_start();
+        
         $taskId = (int)$_POST['taskId'];
         
+        $commentsQuery = "SELECT * FROM task_comments WHERE task_id = $taskId ORDER BY created_at DESC";
+        $result = $mysqli->query($commentsQuery);
+        
+        $comments = [];
+        while ($row = $result->fetch_assoc()) {
+            $isOwner = ($row['username'] === $username);
+            $isEditable = $isOwner || $isAdmin;
+            
+            $comments[] = [
+                'id' => $row['id'],
+                'username' => $row['username'],
+                'comment' => $row['comment'],
+                'created_at' => $row['created_at'],
+                'isOwner' => $isOwner,
+                'canEdit' => $isOwner,
+                'canDelete' => $isEditable
+            ];
+        }
+        
+        ob_end_clean();
+        echo json_encode([
+            'success' => true,
+            'comments' => $comments,
+            'currentUsername' => $username
+        ]);
+        exit;
+    }
+    // ========== AKHIR TAMBAHAN GET COMMENTS ==========
+    
+    // ========== TAMBAHAN: EDIT KOMENTAR ==========
+    if ($_POST['action'] === 'edit_comment') {
+        // Clear any previous output
+        if (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        ob_start();
+        
+        try {
+            // Validate input
+            if (!isset($_POST['commentId']) || !isset($_POST['comment'])) {
+                throw new Exception('Missing required parameters');
+            }
+            
+            $commentId = (int)$_POST['commentId'];
+            $newComment = $mysqli->real_escape_string(trim($_POST['comment']));
+            $username = $currentUser['username'];
+            
+            if (empty($newComment)) {
+                throw new Exception('Comment cannot be empty');
+            }
+            
+            // Cek apakah komentar milik user ini
+            $checkQuery = $mysqli->query("SELECT * FROM task_comments WHERE id = $commentId AND username = '$username'");
+            
+            if (!$checkQuery) {
+                throw new Exception('Database error: ' . $mysqli->error);
+            }
+            
+            if ($checkQuery->num_rows > 0) {
+                // Try update with updated_at, fallback without if column doesn't exist
+                $sql = "UPDATE task_comments SET comment = '$newComment', updated_at = NOW() WHERE id = $commentId";
+                
+                if (!$mysqli->query($sql)) {
+                    // If updated_at column doesn't exist, try without it
+                    $sql = "UPDATE task_comments SET comment = '$newComment' WHERE id = $commentId";
+                    
+                    if (!$mysqli->query($sql)) {
+                        throw new Exception('Update failed: ' . $mysqli->error);
+                    }
+                }
+                
+                ob_end_clean();
+                echo json_encode([
+                    'success' => true,
+                    'comment' => $newComment,
+                    'commentId' => $commentId
+                ]);
+            } else {
+                ob_end_clean();
+                echo json_encode(['success' => false, 'error' => 'Unauthorized: You can only edit your own comments']);
+            }
+        } catch (Exception $e) {
+            ob_end_clean();
+            echo json_encode([
+                'success' => false, 
+                'error' => $e->getMessage(),
+                'debug' => [
+                    'commentId' => $_POST['commentId'] ?? 'not set',
+                    'username' => $username ?? 'not set'
+                ]
+            ]);
+        }
+        exit;
+    }
+    
+    // ========== TAMBAHAN: HAPUS KOMENTAR ==========
+    if ($_POST['action'] === 'delete_comment') {
+        // Clear any previous output
+        if (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        ob_start();
+        
+        try {
+            // Validate input
+            if (!isset($_POST['commentId']) || !isset($_POST['taskId'])) {
+                throw new Exception('Missing required parameters');
+            }
+            
+            $commentId = (int)$_POST['commentId'];
+            $taskId = (int)$_POST['taskId'];
+            $username = $currentUser['username'];
+            
+            // Cek apakah komentar milik user ini atau user adalah admin
+            $checkQuery = $mysqli->query("SELECT * FROM task_comments WHERE id = $commentId AND username = '$username'");
+            
+            if (!$checkQuery) {
+                throw new Exception('Database error: ' . $mysqli->error);
+            }
+            
+            if ($checkQuery->num_rows > 0 || $isAdmin) {
+                $sql = "DELETE FROM task_comments WHERE id = $commentId";
+                
+                if (!$mysqli->query($sql)) {
+                    throw new Exception('Delete failed: ' . $mysqli->error);
+                }
+                
+                // Update comment count
+                $mysqli->query("UPDATE tasks SET comments = GREATEST(comments - 1, 0) WHERE id = $taskId");
+                
+                ob_end_clean();
+                echo json_encode(['success' => true]);
+            } else {
+                ob_end_clean();
+                echo json_encode(['success' => false, 'error' => 'Unauthorized: You can only delete your own comments']);
+            }
+        } catch (Exception $e) {
+            ob_end_clean();
+            echo json_encode([
+                'success' => false, 
+                'error' => $e->getMessage(),
+                'debug' => [
+                    'commentId' => $_POST['commentId'] ?? 'not set',
+                    'taskId' => $_POST['taskId'] ?? 'not set',
+                    'username' => $username ?? 'not set'
+                ]
+            ]);
+        }
+        exit;
+    }
+    // ========== AKHIR TAMBAHAN EDIT/DELETE ==========
+    
+    if ($_POST['action'] === 'toggle_subtask') {
+        $index = (int)$_POST['index'];
+        $username = $_POST['username'] ?? '';
+        $taskId = (int)$_POST['taskId'];
+
         // Get current subtasks
         $taskQuery = $mysqli->query("SELECT subtasks FROM tasks WHERE id = $taskId");
         $taskData = $taskQuery->fetch_assoc();
-        $subtasks = json_decode($taskData['subtasks'], true) ?: [];
-        
-        if (isset($subtasks[$index])) {
-            // Toggle completed status
-            $subtasks[$index]['completed'] = !$subtasks[$index]['completed'];
+        $subtasks = json_decode($taskData['subtasks'], true);
+
+        // Jika decode gagal, format ulang
+        if ($subtasks === null) {
+            $subtasksArray = explode(',', $taskData['subtasks']);
+            $subtasks = [];
+            foreach ($subtasksArray as $text) {
+                $text = trim($text);
+                if (!empty($text)) {
+                    $subtasks[] = [
+                        'text' => $text,
+                        'assigned' => '',
+                        'completed_by' => '',
+                        'completed' => false
+                    ];
+                }
+            }
+        }
+
+        if (!is_array($subtasks)) {
+            $subtasks = [];
+        }
+
+        if (isset($subtasks[$index]) && !empty($username)) {
+            // Initialize completed_by as array
+            if (!isset($subtasks[$index]['completed_by'])) {
+                $subtasks[$index]['completed_by'] = [];
+            } else if (!is_array($subtasks[$index]['completed_by'])) {
+                $completedStr = $subtasks[$index]['completed_by'];
+                $subtasks[$index]['completed_by'] = !empty($completedStr) 
+                    ? array_map('trim', explode(',', $completedStr)) 
+                    : [];
+            }
+
+            // Toggle user completion
+            $completedBy = &$subtasks[$index]['completed_by'];
+            $userIndex = array_search($username, $completedBy);
             
+            $wasCompleted = ($userIndex !== false); // Track apakah user sudah complete sebelumnya
+            
+            if ($userIndex !== false) {
+                // Remove user from completed list
+                array_splice($completedBy, $userIndex, 1);
+            } else {
+                // Add user to completed list
+                $completedBy[] = $username;
+                
+                // ========== TAMBAHAN: KIRIM NOTIFIKASI ==========
+                // Hanya kirim notifikasi saat user MENYELESAIKAN (bukan membatalkan)
+                if ($notificationEnabled && function_exists('sendNotification')) {
+                    $taskInfoQuery = $mysqli->query("SELECT title FROM tasks WHERE id = $taskId");
+                    $taskInfo = $taskInfoQuery->fetch_assoc();
+                    $taskTitle = $taskInfo['title'];
+                    
+                    $subtaskText = $subtasks[$index]['text'];
+                    $message = "$username menyelesaikan subtask \"$subtaskText\" di tugas \"$taskTitle\"";
+                    sendNotification($mysqli, $taskId, 'subtask_complete', $message, $username, $username);
+                }
+                // ========== AKHIR TAMBAHAN NOTIFIKASI ==========
+            }
+
+            // Check if all assigned users completed - handle nested arrays
+            $assignedUsers = [];
+            if (isset($subtasks[$index]['assigned'])) {
+                if (is_array($subtasks[$index]['assigned'])) {
+                    // Flatten nested array
+                    foreach ($subtasks[$index]['assigned'] as $item) {
+                        if (is_array($item)) {
+                            // Extract user from nested array
+                            if (isset($item['user'])) {
+                                $assignedUsers[] = $item['user'];
+                            }
+                        } else {
+                            $assignedUsers[] = $item;
+                        }
+                    }
+                } else {
+                    $assignedUsers = array_map('trim', explode(',', $subtasks[$index]['assigned']));
+                }
+            }
+            
+            // Ensure all are strings and trim - handle arrays safely
+            $assignedUsers = array_map(function($user) {
+                if (is_array($user)) {
+                    return isset($user['user']) ? trim($user['user']) : '';
+                }
+                return is_string($user) ? trim($user) : trim((string)$user);
+            }, $assignedUsers);
+            $assignedUsers = array_filter($assignedUsers);
+
+            // Subtask is completed only if all assigned users completed
+            $subtasks[$index]['completed'] = count($assignedUsers) > 0 && 
+                count(array_diff($assignedUsers, $completedBy)) === 0;
+
             // Save back to database
             $subtasksJson = json_encode($subtasks);
             $subtasksEncoded = $mysqli->real_escape_string($subtasksJson);
             $mysqli->query("UPDATE tasks SET subtasks = '$subtasksEncoded' WHERE id = $taskId");
-            
-            // Calculate progress
+
+            // Calculate progress - revalidate each subtask completion
             $total = count($subtasks);
-            $completed = count(array_filter($subtasks, function($s) { return $s['completed']; }));
-            $progress = $total > 0 ? round(($completed / $total) * 100) : 0;
+            $completed = 0;
             
+            foreach ($subtasks as $subtask) {
+                // Parse assigned users
+                $stAssignedUsers = [];
+                if (isset($subtask['assigned'])) {
+                    if (is_array($subtask['assigned'])) {
+                        foreach ($subtask['assigned'] as $item) {
+                            if (is_array($item) && isset($item['user'])) {
+                                $stAssignedUsers[] = trim($item['user']);
+                            } else {
+                                $stAssignedUsers[] = trim((string)$item);
+                            }
+                        }
+                    } else if (!empty($subtask['assigned'])) {
+                        $stAssignedUsers = array_map('trim', explode(',', $subtask['assigned']));
+                    }
+                }
+                $stAssignedUsers = array_filter($stAssignedUsers);
+                
+                // Parse completed_by
+                $stCompletedBy = [];
+                if (isset($subtask['completed_by'])) {
+                    if (is_array($subtask['completed_by'])) {
+                        $stCompletedBy = array_map(function($u) {
+                            return is_string($u) ? trim($u) : trim((string)$u);
+                        }, $subtask['completed_by']);
+                    } else if (!empty($subtask['completed_by'])) {
+                        $stCompletedBy = array_map('trim', explode(',', $subtask['completed_by']));
+                    }
+                }
+                $stCompletedBy = array_filter($stCompletedBy);
+                
+                // Check if all assigned users completed
+                if (count($stAssignedUsers) > 0 && count(array_diff($stAssignedUsers, $stCompletedBy)) === 0) {
+                    $completed++;
+                }
+            }
+            
+            $progress = $total > 0 ? round(($completed / $total) * 100) : 0;
+
             $category = 'Belum Dijalankan';
             $status = 'todo';
-            
+
             if ($progress > 0 && $progress < 100) {
                 $category = 'Sedang Berjalan';
                 $status = 'progress';
@@ -121,19 +504,194 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $category = 'Selesai';
                 $status = 'completed';
             }
-            
+
             $mysqli->query("UPDATE tasks SET progress = $progress, category = '$category', status = '$status', tasks_completed = $completed, tasks_total = $total WHERE id = $taskId");
+
+            
+            // Clear any warnings/errors from output buffer
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            ob_start();
             
             echo json_encode([
-                'success' => true, 
-                'progress' => $progress, 
-                'completed' => $completed, 
+                'success' => true,
+                'progress' => $progress,
+                'completed' => $completed,
                 'total' => $total,
                 'subtasks' => $subtasks
             ]);
+            
+            ob_end_flush();
         } else {
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
             echo json_encode(['success' => false, 'error' => 'Subtask not found']);
         }
+        exit;
+    }
+
+    if ($_POST['action'] === 'upload_attachments') {
+        $taskId = (int)$_POST['taskId'];
+        
+        // FIXED: Path relatif yang benar
+        // Dari: C:\xamppp\htdocs\htdocs\coba\user\task_detail.php
+        // Ke:   C:\xamppp\htdocs\htdocs\coba\uploads\tasks\
+        $uploadDir = __DIR__ . '/../uploads/tasks/';
+        
+        // Create directory if it doesn't exist
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
+        }
+
+        $uploadedFiles = [];
+        $errors = [];
+
+        if (isset($_FILES['files'])) {
+            $files = $_FILES['files'];
+
+            // Handle single file upload (files is not an array)
+            if (!is_array($files['name'])) {
+                $files = [
+                    'name' => [$files['name']],
+                    'type' => [$files['type']],
+                    'tmp_name' => [$files['tmp_name']],
+                    'error' => [$files['error']],
+                    'size' => [$files['size']]
+                ];
+            }
+
+            for ($i = 0; $i < count($files['name']); $i++) {
+                $fileName = $files['name'][$i];
+                $fileTmp = $files['tmp_name'][$i];
+                $fileError = $files['error'][$i];
+                $fileSize = $files['size'][$i];
+                $fileType = $files['type'][$i];
+
+                if ($fileError === UPLOAD_ERR_OK) {
+                    // Generate unique filename
+                    $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                    $uniqueName = uniqid() . '_' . time() . '.' . $fileExtension;
+                    $absolutePath = $uploadDir . $uniqueName;
+                    
+                    // Path untuk disimpan di database (relatif dari root project)
+                    $relativePath = 'uploads/tasks/' . $uniqueName;
+
+                    // Allowed file types
+                    $allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'webp', 'bmp'];
+                    if (!in_array($fileExtension, $allowedTypes)) {
+                        $errors[] = "File type not allowed: $fileName";
+                        continue;
+                    }
+
+                    // Max file size (10MB)
+                    if ($fileSize > 10 * 1024 * 1024) {
+                        $errors[] = "File too large: $fileName";
+                        continue;
+                    }
+
+                    // Move uploaded file
+                    if (move_uploaded_file($fileTmp, $absolutePath)) {
+                        $uploadedFiles[] = [
+                            'name' => $fileName,
+                            'path' => $relativePath,
+                            'size' => $fileSize,
+                            'type' => $fileType
+                        ];
+                    } else {
+                        $errors[] = "Failed to upload: $fileName";
+                    }
+                } else {
+                    $errors[] = "Upload error for: $fileName";
+                }
+            }
+        }
+
+        if (!empty($uploadedFiles)) {
+            // Get current attachments
+            $taskQuery = $mysqli->query("SELECT attachments FROM tasks WHERE id = $taskId");
+            $taskData = $taskQuery->fetch_assoc();
+            $currentAttachments = [];
+
+            if (!empty($taskData['attachments'])) {
+                $attachmentsData = json_decode($taskData['attachments'], true);
+
+                if (is_array($attachmentsData) && count($attachmentsData) > 0) {
+                    // JSON format - data lengkap
+                    $currentAttachments = $attachmentsData;
+                } else {
+                    // Format lama - comma separated, convert to array format
+                    $attachments = explode(',', $taskData['attachments']);
+                    $currentAttachments = [];
+                    foreach ($attachments as $filename) {
+                        $filename = trim($filename);
+                        if (!empty($filename)) {
+                            $currentAttachments[] = [
+                                'name' => $filename,
+                                'path' => 'uploads/tasks/' . $filename,
+                                'size' => 0 // Size not available for old format
+                            ];
+                        }
+                    }
+                }
+            }
+
+            // Merge new attachments
+            $allAttachments = array_merge($currentAttachments, $uploadedFiles);
+            $attachmentsJson = json_encode($allAttachments);
+            $attachmentsEncoded = $mysqli->real_escape_string($attachmentsJson);
+
+            $mysqli->query("UPDATE tasks SET attachments = '$attachmentsEncoded' WHERE id = $taskId");
+            
+            // ========== TAMBAHAN: KIRIM NOTIFIKASI ==========
+            if ($notificationEnabled && function_exists('sendNotification')) {
+                // Ambil data task untuk judul
+                $taskInfoQuery = $mysqli->query("SELECT title FROM tasks WHERE id = $taskId");
+                $taskInfo = $taskInfoQuery->fetch_assoc();
+                $taskTitle = $taskInfo['title'];
+                
+                // Hitung file dan cek jenis
+                $fileCount = count($uploadedFiles);
+                $imageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
+                $allImages = true;
+                
+                foreach ($uploadedFiles as $file) {
+                    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                    if (!in_array($ext, $imageTypes)) {
+                        $allImages = false;
+                        break;
+                    }
+                }
+                
+                // Buat pesan notifikasi
+                if ($allImages) {
+                    if ($fileCount === 1) {
+                        $message = "$username menambahkan 1 foto ke tugas \"$taskTitle\"";
+                    } else {
+                        $message = "$username menambahkan $fileCount foto ke tugas \"$taskTitle\"";
+                    }
+                    $notificationType = 'photo_upload';
+                } else {
+                    if ($fileCount === 1) {
+                        $message = "$username menambahkan 1 file ke tugas \"$taskTitle\"";
+                    } else {
+                        $message = "$username menambahkan $fileCount file ke tugas \"$taskTitle\"";
+                    }
+                    $notificationType = 'file_upload';
+                }
+                
+                // Kirim notifikasi ke semua anggota kecuali yang upload
+                sendNotification($mysqli, $taskId, $notificationType, $message, $username, $username);
+            }
+            // ========== AKHIR TAMBAHAN NOTIFIKASI ==========
+        }
+
+        echo json_encode([
+            'success' => empty($errors),
+            'uploaded' => $uploadedFiles,
+            'errors' => $errors
+        ]);
         exit;
     }
 
@@ -143,10 +701,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 $commentsQuery = "SELECT * FROM task_comments WHERE task_id = $taskId ORDER BY created_at DESC";
 $commentsResult = $mysqli->query($commentsQuery);
 
-// Get initial subtasks from JSON column
+// Get initial subtasks from JSON field (consistent with polling)
 $subtasks = [];
 if (!empty($task['subtasks'])) {
-    $subtasks = json_decode($task['subtasks'], true) ?: [];
+    $subtasksData = json_decode($task['subtasks'], true);
+    
+    // Handle decode errors or old format
+    if ($subtasksData === null) {
+        $subtasksArray = explode(',', $task['subtasks']);
+        $subtasks = [];
+        foreach ($subtasksArray as $text) {
+            $text = trim($text);
+            if (!empty($text)) {
+                $subtasks[] = [
+                    'text' => $text,
+                    'assigned' => '',
+                    'completed' => false
+                ];
+            }
+        }
+    } elseif (is_array($subtasksData)) {
+        $subtasks = $subtasksData;
+    }
 }
 
 function formatTimeAgo($dateString) {
@@ -160,6 +736,27 @@ function formatTimeAgo($dateString) {
     if ($interval->h > 0) return $interval->h . ' jam lalu';
     if ($interval->i > 0) return $interval->i . ' menit lalu';
     return 'Baru saja';
+
+    if ($_POST['action'] === 'delete_task') {
+        $taskId = (int)$_POST['taskId'];
+        
+        // Validasi: hanya pembuat yang bisa hapus (kecuali admin)
+        if (!$isAdmin && $task['created_by'] !== $username) {
+            echo json_encode(['success' => false, 'error' => 'Tidak memiliki akses']);
+            exit;
+        }
+        
+        // Hapus task
+        $deleteQuery = $mysqli->prepare("DELETE FROM tasks WHERE id = ?");
+        $deleteQuery->bind_param("i", $taskId);
+        
+        if ($deleteQuery->execute()) {
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Gagal menghapus task']);
+        }
+        exit;
+    }
 }
 ?>
 
@@ -218,6 +815,118 @@ function formatTimeAgo($dateString) {
         font-size: 18px;
         font-weight: 600;
         flex: 1;
+    }
+
+    /* ========== TAMBAHAN: CSS UNTUK NOTIFICATION BELL DI HEADER ========== */
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    /* Adjust notification bell untuk header biru */
+    .header .notification-bell-btn {
+        color: white;
+        background: rgba(255, 255, 255, 0.15);
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .header .notification-bell-btn:hover {
+        background: rgba(255, 255, 255, 0.25);
+        color: white;
+    }
+    
+    .header .notification-badge {
+        top: 2px;
+        right: 2px;
+    }
+    /* ========== AKHIR TAMBAHAN CSS ========== */
+
+    .header-menu {
+        position: relative;
+    }
+
+    .menu-btn {
+        background: rgba(255, 255, 255, 0.15);
+        border: none;
+        color: white;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        font-size: 18px;
+    }
+
+    .menu-btn:hover {
+        background: rgba(255, 255, 255, 0.25);
+    }
+
+    .menu-dropdown {
+        position: absolute;
+        top: 45px;
+        right: 0;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        min-width: 180px;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-10px);
+        transition: all 0.3s;
+        z-index: 100;
+    }
+
+    .menu-dropdown.active {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+
+    .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        color: #1f2937;
+        text-decoration: none;
+        transition: background 0.2s;
+        font-size: 14px;
+        border-bottom: 1px solid #f3f4f6;
+    }
+
+    .menu-item:first-child {
+        border-radius: 12px 12px 0 0;
+    }
+
+    .menu-item:last-child {
+        border-radius: 0 0 12px 12px;
+        border-bottom: none;
+    }
+
+    .menu-item:hover {
+        background: #f9fafb;
+    }
+
+    .menu-item.delete-item {
+        color: #ef4444;
+    }
+
+    .menu-item.delete-item:hover {
+        background: #fef2f2;
+    }
+
+    .menu-item i {
+        width: 16px;
+        font-size: 14px;
     }
 
     .container {
@@ -318,6 +1027,21 @@ function formatTimeAgo($dateString) {
         cursor: pointer;
         border: 2px solid white;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+
+    .progress-slider input[type="range"]:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .progress-slider input[type="range"]:disabled::-webkit-slider-thumb {
+        cursor: not-allowed;
+        background: #9ca3af;
+    }
+
+    .progress-slider input[type="range"]:disabled::-moz-range-thumb {
+        cursor: not-allowed;
+        background: #9ca3af;
     }
 
     .progress-info {
@@ -499,80 +1223,83 @@ function formatTimeAgo($dateString) {
         white-space: nowrap;
     }
 
-    /* Subtasks */
+    /* Subtasks - NEW STYLE */
     .subtasks-section {
         margin-bottom: 20px;
     }
 
     .subtask-item {
         display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 12px;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px;
         background: #f8faff;
-        border-radius: 8px;
-        margin-bottom: 10px;
-        border: 1px solid #e0e5ed;
-    }
-
-    .subtask-checkbox {
-        width: 20px;
-        height: 20px;
-        border-radius: 5px;
-        border: 2px solid #ddd;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        border: 2px solid #e0e5ed;
         transition: all 0.3s;
-        flex-shrink: 0;
-        margin-top: 2px;
     }
 
-    .subtask-checkbox.checked {
-        background: #10b981;
-        border-color: #10b981;
-        color: white;
+    .subtask-item:hover {
+        border-color: #C7D2FE;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
     }
 
-    .subtask-content {
-        flex: 1;
-        min-width: 0;
+    .subtask-content-full {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
     }
 
-    .subtask-title {
-        font-size: 14px;
-        font-weight: 500;
-        margin-bottom: 4px;
-        word-break: break-word;
+    .subtask-title-text {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1F2937;
+        transition: all 0.3s;
     }
 
-    .subtask-title.completed {
+    .subtask-title-text.all-completed {
         text-decoration: line-through;
-        color: #9ca3af;
+        color: #9CA3AF;
+        opacity: 0.7;
     }
 
-    .subtask-info {
+    .subtask-users-badges {
         display: flex;
-        gap: 15px;
-        font-size: 12px;
-        color: #6b7280;
         flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
     }
 
-    .subtask-assigned {
-        font-style: italic;
-        display: flex;
+    .user-badge-detail {
+        display: inline-flex;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
+        background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+        color: #4F46E5;
+        padding: 6px 12px;
+        border-radius: 16px;
+        font-size: 13px;
+        font-weight: 600;
+        border: 1.5px solid #C7D2FE;
+        cursor: pointer;
+        transition: all 0.2s;
     }
 
-    .subtask-completed-by {
-        color: #10b981;
-        font-style: italic;
-        display: flex;
-        align-items: center;
-        gap: 4px;
+    .user-badge-detail:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+    }
+
+    .user-badge-detail.completed {
+        background: linear-gradient(135deg, #D1FAE5 0%, #A7F3D0 100%);
+        color: #059669;
+        border-color: #6EE7B7;
+        text-decoration: line-through;
+    }
+
+    .user-badge-detail.completed i {
+        text-decoration: none;
     }
 
     /* Attachments */
@@ -682,6 +1409,12 @@ function formatTimeAgo($dateString) {
         align-items: flex-start;
         margin-bottom: 8px;
     }
+    
+    .comment-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
 
     .comment-user {
         display: flex;
@@ -723,6 +1456,128 @@ function formatTimeAgo($dateString) {
         padding-left: 40px;
         word-break: break-word;
     }
+    
+    /* ========== TAMBAHAN: CSS UNTUK EDIT/DELETE KOMENTAR ========== */
+    .comment-menu {
+        position: relative;
+    }
+    
+    .comment-menu-btn {
+        background: none;
+        border: none;
+        color: #9ca3af;
+        cursor: pointer;
+        padding: 5px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+        font-size: 14px;
+    }
+    
+    .comment-menu-btn:hover {
+        background: rgba(0, 0, 0, 0.05);
+        color: #666;
+    }
+    
+    .comment-menu-dropdown {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        min-width: 120px;
+        display: none;
+        z-index: 100;
+        overflow: hidden;
+    }
+    
+    .comment-menu-dropdown.active {
+        display: block;
+    }
+    
+    .comment-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 15px;
+        text-decoration: none;
+        color: #374151;
+        font-size: 13px;
+        transition: background 0.2s;
+        cursor: pointer;
+    }
+    
+    .comment-menu-item:hover {
+        background: #f3f4f6;
+    }
+    
+    .comment-menu-item.delete-item {
+        color: #ef4444;
+    }
+    
+    .comment-menu-item.delete-item:hover {
+        background: #fee2e2;
+    }
+    
+    .comment-menu-item i {
+        font-size: 12px;
+    }
+    
+    .comment-edit-form {
+        padding-left: 40px;
+        margin-top: 8px;
+    }
+    
+    .comment-edit-input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 2px solid #3550dc;
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        transition: all 0.2s;
+    }
+    
+    .comment-edit-input:focus {
+        box-shadow: 0 0 0 3px rgba(53, 80, 220, 0.1);
+    }
+    
+    .comment-edit-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+    }
+    
+    .comment-edit-actions button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .comment-edit-actions .btn-save {
+        background: #3550dc;
+        color: white;
+    }
+    
+    .comment-edit-actions .btn-save:hover {
+        background: #2940b8;
+    }
+    
+    .comment-edit-actions .btn-cancel {
+        background: #e5e7eb;
+        color: #374151;
+    }
+    
+    .comment-edit-actions .btn-cancel:hover {
+        background: #d1d5db;
+    }
+    /* ========== AKHIR TAMBAHAN CSS ========== */
 
     .comment-input-group {
         display: flex;
@@ -783,6 +1638,49 @@ function formatTimeAgo($dateString) {
         font-size: 13px;
     }
 
+    /* File Upload */
+    .file-upload-wrapper {
+        border: 2px dashed #d1d5db;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: #f9fafb;
+        margin-top: 15px;
+    }
+
+    .file-upload-wrapper:hover {
+        border-color: #3550dc;
+        background: #f0f4ff;
+    }
+
+    .file-upload-wrapper.dragover {
+        border-color: #3550dc;
+        background: #e8ecf4;
+    }
+
+    .file-upload-icon {
+        font-size: 40px;
+        color: #3550dc;
+        margin-bottom: 10px;
+    }
+
+    .file-upload-text {
+        font-size: 14px;
+        color: #6b7280;
+        margin-bottom: 5px;
+    }
+
+    .file-upload-hint {
+        font-size: 12px;
+        color: #9ca3af;
+    }
+
+    #fileInput {
+        display: none;
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
         .container {
@@ -830,6 +1728,34 @@ function formatTimeAgo($dateString) {
         <i class="fas fa-arrow-left"></i>
     </div>
     <div class="header-title">Detail Tugas</div>
+    
+    <!-- ========== TAMBAHAN: NOTIFICATION BELL ========== -->
+    <div class="header-actions">
+        <?php 
+        // Include notification bell component
+        $notificationBellPath = '../components/notification_bell.php';
+        if (file_exists($notificationBellPath)) {
+            include $notificationBellPath;
+        }
+        ?>
+        
+        <?php if ($task['created_by'] === $username): ?>
+        <div class="header-menu">
+            <button class="menu-btn" id="taskMenuBtn" onclick="toggleTaskMenu(event)">
+                <i class="fas fa-ellipsis-v"></i>
+            </button>
+            <div class="menu-dropdown" id="taskMenuDropdown">
+                <a href="edit_task.php?id=<?= $taskId ?>" class="menu-item">
+                    <i class="fas fa-edit"></i> Edit Tugas
+                </a>
+                <a href="#" onclick="deleteTask(event)" class="menu-item delete-item">
+                    <i class="fas fa-trash"></i> Hapus Tugas
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+    </div>
+    <!-- ========== AKHIR TAMBAHAN NOTIFICATION BELL ========== -->
 </div>
 
 <div class="container">
@@ -851,7 +1777,7 @@ function formatTimeAgo($dateString) {
         </div>
         
         <div class="progress-slider">
-            <input type="range" id="progressSlider" min="0" max="100" value="<?= $task["progress"] ?>">
+            <input type="range" id="progressSlider" min="0" max="100" value="<?= $task["progress"] ?>" disabled>
             <div class="progress-info">
                 <span>0%</span>
                 <span class="progress-stats" id="progressStats">
@@ -951,22 +1877,108 @@ function formatTimeAgo($dateString) {
             <?php
             if (count($subtasks) > 0) {
                 foreach ($subtasks as $index => $subtask) {
-                    $completedClass = $subtask['completed'] ? 'checked' : '';
-                    $titleClass = $subtask['completed'] ? 'completed' : '';
+                    // Pastikan subtask adalah array dengan format yang benar
+                    if (is_array($subtask)) {
+                        $subtaskText = isset($subtask['text']) ? $subtask['text'] : '';
+                        $completed = isset($subtask['completed']) ? $subtask['completed'] : false;
+                        
+                        // Parse assigned users - handle nested arrays
+                        $assignedUsers = [];
+                        if (isset($subtask['assigned'])) {
+                            if (is_array($subtask['assigned'])) {
+                                // Flatten array dan konversi semua ke string
+                                foreach ($subtask['assigned'] as $item) {
+                                    if (is_array($item)) {
+                                        // Jika item adalah array (nested), extract user
+                                        if (isset($item['user'])) {
+                                            $assignedUsers[] = $item['user'];
+                                        }
+                                    } else {
+                                        // Jika item adalah string
+                                        $assignedUsers[] = $item;
+                                    }
+                                }
+                            } else if (!empty($subtask['assigned'])) {
+                                $assignedUsers = explode(',', $subtask['assigned']);
+                            }
+                        }
+                        
+                        // Parse completed_by users - handle nested arrays
+                        $completedBy = [];
+                        if (isset($subtask['completed_by'])) {
+                            if (is_array($subtask['completed_by'])) {
+                                // Flatten array dan konversi semua ke string
+                                foreach ($subtask['completed_by'] as $item) {
+                                    if (is_array($item)) {
+                                        // Skip nested arrays di completed_by
+                                        continue;
+                                    } else {
+                                        $completedBy[] = $item;
+                                    }
+                                }
+                            } else if (!empty($subtask['completed_by'])) {
+                                $completedBy = explode(',', $subtask['completed_by']);
+                            }
+                        }
+                    } else {
+                        // Jika bukan array, anggap sebagai string
+                        $subtaskText = (string)$subtask;
+                        $completed = false;
+                        $assignedUsers = [];
+                        $completedBy = [];
+                    }
+                    
+                    if (empty($subtaskText)) continue;
+                    
+                    // Check if all users completed - ensure all are strings
+                    // Konversi semua elemen ke string terlebih dahulu
+                    $assignedUsersString = array_map(function($user) {
+                        return is_string($user) ? $user : (string)$user;
+                    }, $assignedUsers);
+                    $completedByString = array_map(function($user) {
+                        return is_string($user) ? $user : (string)$user;
+                    }, $completedBy);
+                    
+                    // Trim dan filter
+                    $assignedUsersTrimmed = array_map('trim', $assignedUsersString);
+                    $completedByTrimmed = array_map('trim', $completedByString);
+                    $assignedUsersTrimmed = array_filter($assignedUsersTrimmed);
+                    $completedByTrimmed = array_filter($completedByTrimmed);
+                    
+                    $allCompleted = count($assignedUsersTrimmed) > 0 && 
+                        count(array_diff($assignedUsersTrimmed, $completedByTrimmed)) === 0;
+                    $titleClass = $allCompleted ? 'subtask-title-text all-completed' : 'subtask-title-text';
                     
                     echo '<div class="subtask-item" data-index="' . $index . '">';
-                    echo '<div class="subtask-checkbox ' . $completedClass . '" onclick="toggleSubtask(' . $index . ')">';
-                    if ($subtask['completed']) {
-                        echo '<i class="fas fa-check" style="font-size: 10px;"></i>';
+                    echo '<div class="subtask-content-full">';
+                    echo '<div class="' . $titleClass . '">' . htmlspecialchars($subtaskText) . '</div>';
+                    
+                    // Display user badges
+                    if (count($assignedUsers) > 0) {
+                        echo '<div class="subtask-users-badges">';
+                        foreach ($assignedUsers as $user) {
+                            $user = trim($user);
+                            if (empty($user)) continue;
+                            
+                            $isCompleted = in_array($user, $completedBy);
+                            $badgeClass = $isCompleted ? 'user-badge-detail completed' : 'user-badge-detail';
+                            $checkIcon = $isCompleted ? '<i class="fas fa-check"></i> ' : '';
+                            
+                            // Hanya user sendiri yang bisa klik badge mereka
+                            $isCurrentUser = ($user === $username);
+                            if ($isCurrentUser) {
+                                // User bisa klik badge sendiri
+                                echo '<span class="' . $badgeClass . '" onclick="toggleUserSubtask(' . $index . ', \'' . htmlspecialchars($user) . '\')" style="cursor: pointer;">';
+                            } else {
+                                // User lain tidak bisa diklik
+                                echo '<span class="' . $badgeClass . '" style="cursor: not-allowed; opacity: 0.6;">';
+                            }
+                            echo $checkIcon . htmlspecialchars($user);
+                            echo '</span>';
+                        }
+                        echo '</div>';
                     }
-                    echo '</div>';
-                    echo '<div class="subtask-content">';
-                    echo '<div class="subtask-title ' . $titleClass . '">' . htmlspecialchars($subtask['text']) . '</div>';
-                    echo '<div class="subtask-info">';
-                    if (!empty($subtask['assigned'])) {
-                        echo '<span class="subtask-assigned"><i class="fas fa-user-tag"></i> ' . htmlspecialchars($subtask['assigned']) . '</span>';
-                    }
-                    echo '</div>';
+                    
                     echo '</div>';
                     echo '</div>';
                 }
@@ -1003,6 +2015,10 @@ function formatTimeAgo($dateString) {
                 // Coba decode JSON dulu
                 $attachmentsData = json_decode($task["attachments"], true);
                 
+                // DEBUG: Uncomment untuk melihat data attachments
+                // echo "<!-- DEBUG attachments: " . htmlspecialchars($task["attachments"]) . " -->";
+                // echo "<!-- DEBUG decoded: " . print_r($attachmentsData, true) . " -->";
+                
                 if (is_array($attachmentsData) && count($attachmentsData) > 0) {
                     // Format JSON - data lengkap
                     echo '<div class="attachments-grid">';
@@ -1016,8 +2032,20 @@ function formatTimeAgo($dateString) {
 
                         if (empty($filename)) continue;
 
-                        // Prepend '../' to make path relative from user/ directory
-                        $fullFilePath = '../' . $filePath;
+                        // Cek apakah path sudah lengkap atau perlu prepend
+                        if (strpos($filePath, 'uploads/') === 0) {
+                            // Path sudah relatif dari root, tambah ../ untuk naik satu level
+                            $fullFilePath = '../' . $filePath;
+                        } elseif (strpos($filePath, '/uploads/') === 0) {
+                            // Path absolute, remove leading slash dan tambah ../
+                            $fullFilePath = '..' . $filePath;
+                        } else {
+                            // Path lain, gunakan apa adanya
+                            $fullFilePath = $filePath;
+                        }
+
+                        // DEBUG path
+                        // echo "<!-- File: $filename | Path: $filePath | Full: $fullFilePath -->";
 
                         $fileExtension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
                         $isImage = in_array($fileExtension, ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']);
@@ -1025,7 +2053,11 @@ function formatTimeAgo($dateString) {
 
                         if ($isImage && !empty($filePath)) {
                             echo '<div class="attachment-item">';
-                            echo '<img src="' . htmlspecialchars($fullFilePath) . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($fullFilePath) . '\')">';
+                            echo '<img src="' . htmlspecialchars($fullFilePath) . '?t=' . time() . '" ';
+                            echo 'alt="' . htmlspecialchars($filename) . '" ';
+                            echo 'class="attachment-image" ';
+                            echo 'onclick="openImage(\'' . htmlspecialchars($fullFilePath) . '?t=' . time() . '\')" ';
+                            echo 'onerror="this.onerror=null; this.src=\'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'200\'%3E%3Crect fill=\'%23ddd\' width=\'200\' height=\'200\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' dy=\'.3em\' fill=\'%23999\'%3EImage not found%3C/text%3E%3C/svg%3E\';">';
                             echo '</div>';
                         } else {
                             $icon = 'fa-file';
@@ -1033,9 +2065,9 @@ function formatTimeAgo($dateString) {
                             elseif (in_array($fileExtension, ['doc', 'docx'])) $icon = 'fa-file-word';
                             elseif (in_array($fileExtension, ['xls', 'xlsx'])) $icon = 'fa-file-excel';
                             elseif (in_array($fileExtension, ['jpg', 'jpeg', 'png', 'gif'])) $icon = 'fa-image';
-
+                            
                             $fileSizeText = $fileSize > 0 ? number_format($fileSize / 1024, 1) . ' KB' : '';
-
+                            
                             echo '<div class="attachment-item">';
                             echo '<div class="attachment-file" onclick="window.open(\'' . htmlspecialchars($fullFilePath) . '\', \'_blank\')">';
                             echo '<div class="attachment-file-icon"><i class="fas ' . $icon . '"></i></div>';
@@ -1067,7 +2099,11 @@ function formatTimeAgo($dateString) {
                         
                         if ($isImage) {
                             echo '<div class="attachment-item">';
-                            echo '<img src="' . htmlspecialchars($fileUrl) . '" alt="' . htmlspecialchars($filename) . '" class="attachment-image" onclick="openImage(\'' . htmlspecialchars($fileUrl) . '\')">';
+                            echo '<img src="' . htmlspecialchars($fileUrl) . '?t=' . time() . '" ';
+                            echo 'alt="' . htmlspecialchars($filename) . '" ';
+                            echo 'class="attachment-image" ';
+                            echo 'onclick="openImage(\'' . htmlspecialchars($fileUrl) . '?t=' . time() . '\')" ';
+                            echo 'onerror="this.onerror=null; this.src=\'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'200\'%3E%3Crect fill=\'%23ddd\' width=\'200\' height=\'200\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' dy=\'.3em\' fill=\'%23999\'%3EImage not found%3C/text%3E%3C/svg%3E\';">';
                             echo '</div>';
                         } else {
                             $icon = 'fa-file';
@@ -1094,6 +2130,16 @@ function formatTimeAgo($dateString) {
             }
             ?>
         </div>
+
+        <!-- File Upload -->
+        <div class="file-upload-wrapper" id="fileUploadWrapper">
+            <div class="file-upload-icon">
+                <i class="fas fa-cloud-upload-alt"></i>
+            </div>
+            <div class="file-upload-text">Klik untuk upload file</div>
+            <div class="file-upload-hint">atau drag & drop file di sini</div>
+        </div>
+        <input type="file" id="fileInput" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx">
     </div>
 
     <!-- Comments -->
@@ -1111,15 +2157,50 @@ function formatTimeAgo($dateString) {
                 while ($comment = $commentsResult->fetch_assoc()) {
                     $initial = strtoupper(substr($comment['username'], 0, 1));
                     $timeAgo = formatTimeAgo($comment['created_at']);
-                    echo '<div class="comment-item">';
+                    $isOwner = ($comment['username'] === $username);
+                    $commentId = $comment['id'];
+                    
+                    echo '<div class="comment-item" id="comment-' . $commentId . '">';
                     echo '<div class="comment-header">';
                     echo '<div class="comment-user">';
                     echo '<div class="comment-avatar">' . $initial . '</div>';
                     echo '<div class="comment-username">' . htmlspecialchars($comment['username']) . '</div>';
                     echo '</div>';
+                    echo '<div class="comment-actions">';
                     echo '<div class="comment-time">' . $timeAgo . '</div>';
+                    
+                    // Tombol edit/delete hanya untuk pemilik komentar atau admin
+                    if ($isOwner || $isAdmin) {
+                        echo '<div class="comment-menu">';
+                        echo '<button class="comment-menu-btn" onclick="toggleCommentMenu(event, ' . $commentId . ')">';
+                        echo '<i class="fas fa-ellipsis-v"></i>';
+                        echo '</button>';
+                        echo '<div class="comment-menu-dropdown" id="commentMenu-' . $commentId . '">';
+                        
+                        if ($isOwner) {
+                            echo '<a href="#" onclick="editComment(event, ' . $commentId . ', \'' . htmlspecialchars(addslashes($comment['comment'])) . '\')" class="comment-menu-item">';
+                            echo '<i class="fas fa-edit"></i> Edit';
+                            echo '</a>';
+                        }
+                        
+                        echo '<a href="#" onclick="deleteComment(event, ' . $commentId . ')" class="comment-menu-item delete-item">';
+                        echo '<i class="fas fa-trash"></i> Hapus';
+                        echo '</a>';
+                        
+                        echo '</div>';
+                        echo '</div>';
+                    }
+                    
                     echo '</div>';
-                    echo '<div class="comment-text">' . htmlspecialchars($comment['comment']) . '</div>';
+                    echo '</div>';
+                    echo '<div class="comment-text" id="commentText-' . $commentId . '">' . htmlspecialchars($comment['comment']) . '</div>';
+                    echo '<div class="comment-edit-form" id="commentEditForm-' . $commentId . '" style="display: none;">';
+                    echo '<input type="text" class="comment-edit-input" id="commentEditInput-' . $commentId . '" value="' . htmlspecialchars($comment['comment']) . '">';
+                    echo '<div class="comment-edit-actions">';
+                    echo '<button class="btn-save" onclick="saveEditComment(' . $commentId . ')">Simpan</button>';
+                    echo '<button class="btn-cancel" onclick="cancelEditComment(' . $commentId . ')">Batal</button>';
+                    echo '</div>';
+                    echo '</div>';
                     echo '</div>';
                 }
             } else {
@@ -1143,6 +2224,12 @@ function formatTimeAgo($dateString) {
 <script>
     let currentTaskId = <?= $taskId ?>;
     let currentProgress = <?= $task["progress"] ?>;
+    let lastUpdateTime = Date.now();
+    let pollingInterval;
+    let commentPollingInterval;
+    let lastCommentCount = <?= $commentsResult->num_rows ?>;
+    const currentUsername = "<?= htmlspecialchars($username) ?>";
+    const isAdmin = <?= $isAdmin ? 'true' : 'false' ?>;
 
     // Progress Slider
     const progressSlider = document.getElementById('progressSlider');
@@ -1151,16 +2238,16 @@ function formatTimeAgo($dateString) {
     const statusBadge = document.getElementById('statusBadge');
     const progressStats = document.getElementById('progressStats');
 
-    progressSlider.addEventListener('input', function() {
-        const progress = this.value;
-        progressBar.style.width = progress + '%';
-        currentProgressElement.textContent = progress + '%';
-    });
-
-    progressSlider.addEventListener('change', async function() {
-        const newProgress = parseInt(this.value);
-        await updateProgress(newProgress);
-    });
+    //     progressSlider.addEventListener('input', function() {
+    //         const progress = this.value;
+    //         progressBar.style.width = progress + '%';
+    //         currentProgressElement.textContent = progress + '%';
+    //     });
+    // 
+    //     progressSlider.addEventListener('change', async function() {
+    //         const newProgress = parseInt(this.value);
+    //         await updateProgress(newProgress);
+    //     });
 
     async function updateProgress(progress) {
         try {
@@ -1218,31 +2305,10 @@ function formatTimeAgo($dateString) {
             if (result.success) {
                 commentInput.value = '';
                 
+                // Trigger polling segera untuk update UI
+                await pollComments();
+                
                 const commentsSection = document.getElementById('commentsSection');
-                const noData = commentsSection.querySelector('.no-data');
-                if (noData) {
-                    noData.remove();
-                }
-                
-                const initial = result.username.charAt(0).toUpperCase();
-                const newCommentHTML = `
-                    <div class="comment-item">
-                        <div class="comment-header">
-                            <div class="comment-user">
-                                <div class="comment-avatar">${initial}</div>
-                                <div class="comment-username">${result.username}</div>
-                            </div>
-                            <div class="comment-time">Baru saja</div>
-                        </div>
-                        <div class="comment-text">${comment}</div>
-                    </div>
-                `;
-                
-                commentsSection.insertAdjacentHTML('afterbegin', newCommentHTML);
-                
-                const commentCount = document.getElementById('commentCount');
-                commentCount.textContent = parseInt(commentCount.textContent) + 1;
-                
                 commentsSection.scrollTop = 0;
             } else {
                 alert('Gagal menambahkan komentar: ' + result.error);
@@ -1252,10 +2318,326 @@ function formatTimeAgo($dateString) {
             alert('Terjadi kesalahan saat menambahkan komentar');
         }
     }
+    
+    // ========== TAMBAHAN: FUNGSI EDIT/DELETE KOMENTAR ==========
+    
+    // Toggle comment menu dropdown - MUST BE GLOBAL for inline onclick
+    window.toggleCommentMenu = function(event, commentId) {
+        event.stopPropagation();
+        const dropdown = document.getElementById(`commentMenu-${commentId}`);
+        
+        if (!dropdown) {
+            console.error('Dropdown not found for comment:', commentId);
+            return;
+        }
+        
+        // Close all other dropdowns
+        document.querySelectorAll('.comment-menu-dropdown').forEach(d => {
+            if (d.id !== `commentMenu-${commentId}`) {
+                d.classList.remove('active');
+            }
+        });
+        
+        dropdown.classList.toggle('active');
+    };
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        if (!event.target.closest('.comment-menu')) {
+            document.querySelectorAll('.comment-menu-dropdown').forEach(dropdown => {
+                dropdown.classList.remove('active');
+            });
+        }
+    });
+    
+    // Edit comment - MUST BE GLOBAL
+    window.editComment = function(event, commentId, currentComment) {
+        event.preventDefault();
+        
+        // Hide menu
+        const menu = document.getElementById(`commentMenu-${commentId}`);
+        if (menu) {
+            menu.classList.remove('active');
+        }
+        
+        // Hide text, show edit form
+        const textEl = document.getElementById(`commentText-${commentId}`);
+        const formEl = document.getElementById(`commentEditForm-${commentId}`);
+        
+        if (textEl && formEl) {
+            textEl.style.display = 'none';
+            formEl.style.display = 'block';
+            
+            // Focus on input
+            const input = document.getElementById(`commentEditInput-${commentId}`);
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }
+    };
+    
+    // Save edited comment - MUST BE GLOBAL
+    window.saveEditComment = async function(commentId) {
+        const input = document.getElementById(`commentEditInput-${commentId}`);
+        const newComment = input.value.trim();
+        
+        if (!newComment) {
+            alert('Komentar tidak boleh kosong');
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('action', 'edit_comment');
+            formData.append('commentId', commentId);
+            formData.append('comment', newComment);
+            
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+            
+            // Cek apakah response OK
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            // Get response text first untuk debug
+            const responseText = await response.text();
+            
+            // Try parse JSON
+            let result;
+            try {
+                result = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Response is not valid JSON:', responseText);
+                alert('Server error: Response tidak valid.\n\nCek console (F12) untuk detail.');
+                return;
+            }
+            
+            if (result.success) {
+                // Trigger polling untuk update UI
+                await pollComments();
+            } else {
+                // Show detailed error
+                let errorMsg = 'Gagal mengedit komentar:\n' + (result.error || 'Unknown error');
+                
+                if (result.debug) {
+                    errorMsg += '\n\nDebug Info:';
+                    for (let key in result.debug) {
+                        errorMsg += '\n- ' + key + ': ' + result.debug[key];
+                    }
+                }
+                
+                console.error('Edit comment error:', result);
+                alert(errorMsg);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Terjadi kesalahan saat mengedit komentar:\n' + error.message);
+        }
+    };
+    
+    // Cancel edit comment - MUST BE GLOBAL
+    window.cancelEditComment = function(commentId) {
+        // Hide edit form, show text
+        const formEl = document.getElementById(`commentEditForm-${commentId}`);
+        const textEl = document.getElementById(`commentText-${commentId}`);
+        
+        if (formEl && textEl) {
+            formEl.style.display = 'none';
+            textEl.style.display = 'block';
+        }
+    };
+    
+    // Delete comment - MUST BE GLOBAL
+    window.deleteComment = async function(event, commentId) {
+        event.preventDefault();
+        
+        if (!confirm('Apakah Anda yakin ingin menghapus komentar ini?')) {
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('action', 'delete_comment');
+            formData.append('commentId', commentId);
+            formData.append('taskId', currentTaskId);
+            
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const responseText = await response.text();
+            
+            let result;
+            try {
+                result = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('Response is not valid JSON:', responseText);
+                alert('Server error: Response tidak valid. Cek console untuk detail.');
+                return;
+            }
+            
+            if (result.success) {
+                // Trigger polling untuk update UI
+                await pollComments();
+            } else {
+                // Show detailed error
+                let errorMsg = 'Gagal menghapus komentar:\n' + (result.error || 'Unknown error');
+                
+                if (result.debug) {
+                    errorMsg += '\n\nDebug Info:';
+                    for (let key in result.debug) {
+                        errorMsg += '\n- ' + key + ': ' + result.debug[key];
+                    }
+                }
+                
+                console.error('Delete comment error:', result);
+                alert(errorMsg);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Terjadi kesalahan saat menghapus komentar:\n' + error.message);
+        }
+    };
+    // ========== AKHIR TAMBAHAN FUNGSI ==========
+    
+    // ========== TAMBAHAN: AUTO-REFRESH COMMENTS ==========
+    
+    // Function untuk render comments dari API
+    function renderComments(comments) {
+        const commentsSection = document.getElementById('commentsSection');
+        
+        if (comments.length === 0) {
+            commentsSection.innerHTML = `
+                <div class="no-data">
+                    <i class="fas fa-comment"></i>
+                    <p>Belum ada komentar</p>
+                </div>
+            `;
+            return;
+        }
+        
+        const commentsHTML = comments.map(comment => {
+            const initial = comment.username.charAt(0).toUpperCase();
+            const timeAgo = formatTimeAgo(comment.created_at);
+            
+            // Hanya tampilkan menu jika user adalah owner atau admin
+            const showMenu = comment.canEdit || comment.canDelete;
+            
+            return `
+                <div class="comment-item" id="comment-${comment.id}">
+                    <div class="comment-header">
+                        <div class="comment-user">
+                            <div class="comment-avatar">${initial}</div>
+                            <div class="comment-username">${escapeHtml(comment.username)}</div>
+                        </div>
+                        <div class="comment-actions">
+                            <div class="comment-time">${timeAgo}</div>
+                            ${showMenu ? `
+                                <div class="comment-menu">
+                                    <button class="comment-menu-btn" onclick="toggleCommentMenu(event, ${comment.id})">
+                                        <i class="fas fa-ellipsis-v"></i>
+                                    </button>
+                                    <div class="comment-menu-dropdown" id="commentMenu-${comment.id}">
+                                        ${comment.canEdit ? `
+                                            <a href="#" onclick="editComment(event, ${comment.id}, '${escapeHtml(comment.comment).replace(/'/g, "\\'")}' )" class="comment-menu-item">
+                                                <i class="fas fa-edit"></i> Edit
+                                            </a>
+                                        ` : ''}
+                                        ${comment.canDelete ? `
+                                            <a href="#" onclick="deleteComment(event, ${comment.id})" class="comment-menu-item delete-item">
+                                                <i class="fas fa-trash"></i> Hapus
+                                            </a>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <div class="comment-text" id="commentText-${comment.id}">${escapeHtml(comment.comment)}</div>
+                    <div class="comment-edit-form" id="commentEditForm-${comment.id}" style="display: none;">
+                        <input type="text" class="comment-edit-input" id="commentEditInput-${comment.id}" value="${escapeHtml(comment.comment)}">
+                        <div class="comment-edit-actions">
+                            <button class="btn-save" onclick="saveEditComment(${comment.id})">Simpan</button>
+                            <button class="btn-cancel" onclick="cancelEditComment(${comment.id})">Batal</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        commentsSection.innerHTML = commentsHTML;
+    }
+    
+    // Helper function untuk escape HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // Helper function untuk format time ago
+    function formatTimeAgo(dateString) {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000); // seconds
+        
+        if (diff < 60) return 'Baru saja';
+        if (diff < 3600) return Math.floor(diff / 60) + ' menit yang lalu';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' jam yang lalu';
+        if (diff < 2592000) return Math.floor(diff / 86400) + ' hari yang lalu';
+        if (diff < 31536000) return Math.floor(diff / 2592000) + ' bulan yang lalu';
+        return Math.floor(diff / 31536000) + ' tahun yang lalu';
+    }
+    
+    // Polling untuk update comments otomatis
+    async function pollComments() {
+        try {
+            const formData = new FormData();
+            formData.append('action', 'get_comments');
+            formData.append('taskId', currentTaskId);
+            
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Update comment count
+                const commentCount = document.getElementById('commentCount');
+                if (commentCount) {
+                    commentCount.textContent = result.comments.length;
+                }
+                
+                // Jika jumlah comment berubah, render ulang
+                if (result.comments.length !== lastCommentCount) {
+                    renderComments(result.comments);
+                    lastCommentCount = result.comments.length;
+                }
+            }
+        } catch (error) {
+            console.error('Error polling comments:', error);
+        }
+    }
+    
+    // Start polling setiap 5 detik
+    commentPollingInterval = setInterval(pollComments, 5000);
+    
+    // ========== AKHIR AUTO-REFRESH COMMENTS ==========
 
     function renderSubtasks(subtasks) {
         const subtasksSection = document.getElementById('subtasksSection');
-        
+
         if (subtasks.length === 0) {
             subtasksSection.innerHTML = `
                 <div class="no-data">
@@ -1269,25 +2651,72 @@ function formatTimeAgo($dateString) {
 
         const completed = subtasks.filter(st => st.completed).length;
         const total = subtasks.length;
-        
+
         progressStats.textContent = `${completed}/${total} selesai`;
-        
+
         subtasksSection.innerHTML = subtasks.map((subtask, index) => {
-            const completedClass = subtask.completed ? 'checked' : '';
-            const titleClass = subtask.completed ? 'completed' : '';
-            const assigned = subtask.assigned ? 
-                `<span class="subtask-assigned"><i class="fas fa-user-tag"></i> ${subtask.assigned}</span>` : '';
+            // Parse assigned users - handle nested objects
+            let assignedUsers = [];
+            if (Array.isArray(subtask.assigned)) {
+                assignedUsers = subtask.assigned.map(u => {
+                    // Jika u adalah object dengan property 'user'
+                    if (typeof u === 'object' && u !== null && u.user) {
+                        return String(u.user).trim();
+                    }
+                    // Jika u adalah string biasa
+                    return String(u).trim();
+                }).filter(u => u && u !== '[object Object]');
+            } else if (subtask.assigned) {
+                assignedUsers = subtask.assigned.split(',').map(u => u.trim()).filter(u => u);
+            }
             
+            // Parse completed_by users - handle nested objects
+            let completedBy = [];
+            if (Array.isArray(subtask.completed_by)) {
+                completedBy = subtask.completed_by.map(u => {
+                    // Jika u adalah object, skip
+                    if (typeof u === 'object' && u !== null) {
+                        return '';
+                    }
+                    return String(u).trim();
+                }).filter(u => u && u !== '[object Object]');
+            } else if (subtask.completed_by) {
+                completedBy = subtask.completed_by.split(',').map(u => u.trim()).filter(u => u);
+            }
+            
+            // Check if all users completed
+            const allCompleted = assignedUsers.length > 0 && 
+                assignedUsers.every(user => completedBy.includes(user));
+            const titleClass = allCompleted ? 'subtask-title-text all-completed' : 'subtask-title-text';
+            
+            // Generate user badges HTML
+            let userBadgesHtml = '';
+            if (assignedUsers.length > 0) {
+                userBadgesHtml = '<div class="subtask-users-badges">';
+                assignedUsers.forEach(user => {
+                    const isCompleted = completedBy.includes(user);
+                    const badgeClass = isCompleted ? 'user-badge-detail completed' : 'user-badge-detail';
+                    const checkIcon = isCompleted ? '<i class="fas fa-check"></i> ' : '';
+                    
+                    // Hanya user sendiri yang bisa klik badge mereka
+                    const isCurrentUser = (user === currentUsername);
+                    const onclick = isCurrentUser ? `onclick="toggleUserSubtask(${index}, '${escapeHtml(user)}')"` : '';
+                    const cursorStyle = isCurrentUser ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.6;';
+                    
+                    userBadgesHtml += `
+                        <span class="${badgeClass}" ${onclick} style="${cursorStyle}">
+                            ${checkIcon}${escapeHtml(user)}
+                        </span>
+                    `;
+                });
+                userBadgesHtml += '</div>';
+            }
+
             return `
                 <div class="subtask-item" data-index="${index}">
-                    <div class="subtask-checkbox ${completedClass}" onclick="toggleSubtask(${index})">
-                        ${subtask.completed ? '<i class="fas fa-check" style="font-size: 10px;"></i>' : ''}
-                    </div>
-                    <div class="subtask-content">
-                        <div class="subtask-title ${titleClass}">${escapeHtml(subtask.text)}</div>
-                        <div class="subtask-info">
-                            ${assigned}
-                        </div>
+                    <div class="subtask-content-full">
+                        <div class="${titleClass}">${escapeHtml(subtask.text)}</div>
+                        ${userBadgesHtml}
                     </div>
                 </div>
             `;
@@ -1300,11 +2729,13 @@ function formatTimeAgo($dateString) {
         return div.innerHTML;
     }
 
-    async function toggleSubtask(index) {
+    // Toggle user completion for subtask
+    async function toggleUserSubtask(index, username) {
         try {
             const formData = new FormData();
             formData.append('action', 'toggle_subtask');
             formData.append('index', index);
+            formData.append('username', username);
             formData.append('taskId', currentTaskId);
 
             const response = await fetch('', {
@@ -1346,6 +2777,275 @@ function formatTimeAgo($dateString) {
 
     function openImage(imageUrl) {
         window.open(imageUrl, '_blank', 'width=800,height=600');
+    }
+
+    // Polling for real-time updates
+    async function pollTaskData() {
+        try {
+            const formData = new FormData();
+            formData.append('action', 'get_task_data');
+            formData.append('taskId', currentTaskId);
+
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                const taskData = result.task;
+
+                // Update progress if changed
+                if (taskData.progress !== currentProgress) {
+                    currentProgress = taskData.progress;
+                    progressSlider.value = currentProgress;
+                    progressBar.style.width = currentProgress + '%';
+                    currentProgressElement.textContent = currentProgress + '%';
+
+                    // Update status badge
+                    statusBadge.textContent = taskData.category;
+                    statusBadge.className = 'status-badge ' + taskData.status;
+                }
+
+                // Update subtasks if changed
+                const newSubtasks = taskData.subtasks;
+                const existingSubtasks = Array.from(document.querySelectorAll('.subtask-item')).map(item => {
+                    const index = parseInt(item.dataset.index);
+                    const title = item.querySelector('.subtask-title-text');
+                    const badges = item.querySelectorAll('.user-badge-detail');
+                    
+                    // Extract user completion data
+                    const assignedUsers = Array.from(badges).map(badge => {
+                        return badge.textContent.trim().replace(/^✔\s*/, '');
+                    });
+                    
+                    const completedBy = Array.from(badges).filter(badge => 
+                        badge.classList.contains('completed')
+                    ).map(badge => badge.textContent.trim().replace(/^✔\s*/, ''));
+                    
+                    const allCompleted = assignedUsers.length > 0 && 
+                        assignedUsers.length === completedBy.length;
+                    
+                    return {
+                        text: title ? title.textContent : '',
+                        completed: allCompleted,
+                        assigned: assignedUsers,
+                        completed_by: completedBy
+                    };
+                });
+
+                if (JSON.stringify(newSubtasks) !== JSON.stringify(existingSubtasks)) {
+                    renderSubtasks(newSubtasks);
+                }
+
+                // Update progress stats
+                progressStats.textContent = `${taskData.tasks_completed}/${taskData.tasks_total} selesai`;
+
+                lastUpdateTime = Date.now();
+            }
+        } catch (error) {
+            console.error('Polling error:', error);
+        }
+    }
+
+    function startPolling() {
+        // Poll every 5 seconds
+        pollingInterval = setInterval(pollTaskData, 5000);
+    }
+
+    function stopPolling() {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+        }
+    }
+
+    // File Upload Functionality
+    const fileUploadWrapper = document.getElementById('fileUploadWrapper');
+    const fileInput = document.getElementById('fileInput');
+    const attachmentsSection = document.getElementById('attachmentsSection');
+    const attachmentCount = document.getElementById('attachmentCount');
+
+    // Click to upload
+    fileUploadWrapper.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    // Drag and drop
+    fileUploadWrapper.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileUploadWrapper.classList.add('dragover');
+    });
+
+    fileUploadWrapper.addEventListener('dragleave', () => {
+        fileUploadWrapper.classList.remove('dragover');
+    });
+
+    fileUploadWrapper.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileUploadWrapper.classList.remove('dragover');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+
+    async function uploadFiles(files) {
+        const formData = new FormData();
+        formData.append('action', 'upload_attachments');
+        formData.append('taskId', currentTaskId);
+
+        // Handle multiple files
+        for (let i = 0; i < files.length; i++) {
+            formData.append('files[]', files[i]);
+        }
+
+        try {
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                if (result.uploaded && result.uploaded.length > 0) {
+                    // Update attachments section
+                    updateAttachmentsSection(result.uploaded);
+                    alert(`Berhasil upload ${result.uploaded.length} file!`);
+                }
+
+                if (result.errors && result.errors.length > 0) {
+                    alert('Beberapa file gagal diupload:\n' + result.errors.join('\n'));
+                }
+            } else {
+                alert('Gagal upload file: ' + (result.errors ? result.errors.join('\n') : 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            alert('Terjadi kesalahan saat upload file');
+        }
+    }
+
+    function updateAttachmentsSection(newAttachments) {
+        // Get current attachments count
+        let currentCount = parseInt(attachmentCount.textContent) || 0;
+        currentCount += newAttachments.length;
+        attachmentCount.textContent = currentCount;
+
+        // Remove no-data message if exists
+        const noData = attachmentsSection.querySelector('.no-data');
+        if (noData) {
+            noData.remove();
+        }
+
+        // Create or get attachments grid
+        let attachmentsGrid = attachmentsSection.querySelector('.attachments-grid');
+        if (!attachmentsGrid) {
+            attachmentsGrid = document.createElement('div');
+            attachmentsGrid.className = 'attachments-grid';
+            attachmentsSection.appendChild(attachmentsGrid);
+        }
+
+        // Add new attachments
+        newAttachments.forEach(attachment => {
+            const fileExtension = attachment.name.split('.').pop().toLowerCase();
+            const isImage = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(fileExtension);
+            const safeFilename = attachment.name.length > 20 ? attachment.name.substring(0, 20) + '...' : attachment.name;
+
+            let attachmentHTML = '';
+
+            if (isImage) {
+                attachmentHTML = `
+                    <div class="attachment-item">
+                        <img src="../${attachment.path}?t=${Date.now()}" alt="${attachment.name}" class="attachment-image" onclick="openImage('../${attachment.path}?t=${Date.now()}')">
+                    </div>
+                `;
+            } else {
+                let icon = 'fa-file';
+                if (fileExtension === 'pdf') icon = 'fa-file-pdf';
+                else if (['doc', 'docx'].includes(fileExtension)) icon = 'fa-file-word';
+                else if (['xls', 'xlsx'].includes(fileExtension)) icon = 'fa-file-excel';
+
+                const fileSizeText = attachment.size > 0 ? (attachment.size / 1024).toFixed(1) + ' KB' : '';
+
+                attachmentHTML = `
+                    <div class="attachment-item">
+                        <div class="attachment-file" onclick="window.open('../${attachment.path}', '_blank')">
+                            <div class="attachment-file-icon"><i class="fas ${icon}"></i></div>
+                            <div class="attachment-file-name">${safeFilename}</div>
+                            <div class="attachment-file-type">${fileSizeText || fileExtension.toUpperCase()}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            attachmentsGrid.insertAdjacentHTML('beforeend', attachmentHTML);
+        });
+    }
+
+    // Start polling when page loads
+    window.addEventListener('load', startPolling);
+
+    // Stop polling when page unloads
+    window.addEventListener('beforeunload', stopPolling);
+
+    // Toggle task menu
+    function toggleTaskMenu(event) {
+        event.stopPropagation();
+        const dropdown = document.getElementById('taskMenuDropdown');
+        dropdown.classList.toggle('active');
+    }
+
+    // Close menu when clicking outside
+    document.addEventListener('click', function(event) {
+        const dropdown = document.getElementById('taskMenuDropdown');
+        const menuBtn = document.getElementById('taskMenuBtn');
+        
+        if (dropdown && !dropdown.contains(event.target) && !menuBtn.contains(event.target)) {
+            dropdown.classList.remove('active');
+        }
+    });
+
+    // Delete task function
+    async function deleteTask(event) {
+        event.preventDefault();
+        
+        if (!confirm('Apakah Anda yakin ingin menghapus tugas ini?')) {
+            return;
+        }
+        
+        try {
+            const formData = new FormData();
+            formData.append('action', 'delete_task');
+            formData.append('taskId', currentTaskId);
+            
+            const response = await fetch('', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                alert('Tugas berhasil dihapus!');
+                window.location.href = 'tasks.php';
+            } else {
+                alert('Gagal menghapus tugas: ' + result.error);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Terjadi kesalahan saat menghapus tugas');
+        }
     }
 </script>
 

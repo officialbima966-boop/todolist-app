@@ -125,7 +125,8 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ganti Password | BM Garage</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+    <!-- PERBAIKAN: Gunakan CDN FontAwesome yang benar -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
             margin: 0;
@@ -167,6 +168,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
             color: white;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 1.2rem;
         }
 
         .back-button:hover {
@@ -269,6 +271,10 @@ $current_page = basename($_SERVER['PHP_SELF']);
             transition: all 0.3s;
             width: 100%;
             font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
 
         .btn-primary {
@@ -341,53 +347,6 @@ $current_page = basename($_SERVER['PHP_SELF']);
         .btn-warning {
             background: #ff9800;
             color: white;
-        }
-
-        .bottom-nav {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #ffffff;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 380px;
-            padding: 8px;
-            border-radius: 50px;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
-            z-index: 100;
-        }
-
-        .bottom-nav a {
-            flex: 1;
-            text-align: center;
-            color: #2455ff;
-            text-decoration: none;
-            font-weight: 600;
-            border-radius: 40px;
-            padding: 10px 0;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .bottom-nav a i {
-            font-size: 20px;
-            margin-bottom: 3px;
-        }
-
-        .bottom-nav a.active {
-            background: #2455ff;
-            color: #fff;
-            box-shadow: 0 4px 15px rgba(36, 85, 255, 0.4);
-        }
-
-        .bottom-nav a:hover {
-            transform: scale(1.08);
         }
     </style>
 </head>
@@ -475,25 +434,6 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <?php endif; ?>
 </div>
 
-<div class="bottom-nav">
-    <a href="dashboard.php" class="<?= $current_page=='dashboard.php'?'active':'' ?>">
-        <i class="fas fa-home"></i>
-        <span>Home</span>
-    </a>
-    <a href="tasks.php" class="<?= $current_page=='tasks.php'?'active':'' ?>">
-        <i class="fas fa-tasks"></i>
-        <span>Tasks</span>
-    </a>
-    <a href="users.php" class="<?= $current_page=='users.php'?'active':'' ?>">
-        <i class="fas fa-users"></i>
-        <span>Users</span>
-    </a>
-    <a href="profile.php" class="<?= $current_page=='profile.php'?'active':'' ?>">
-        <i class="fas fa-user-circle"></i>
-        <span>Profile</span>
-    </a>
-</div>
-
 <script>
     function goToProfile() {
         window.location.href = 'profile.php';
@@ -507,7 +447,16 @@ $current_page = basename($_SERVER['PHP_SELF']);
         const input = document.getElementById(inputId);
         const type = input.getAttribute('type') === 'password' ? 'text' : 'password';
         input.setAttribute('type', type);
-        icon.innerHTML = type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+        
+        // Perbaiki toggle icon
+        const eyeIcon = icon.querySelector('i');
+        if (type === 'password') {
+            eyeIcon.classList.remove('fa-eye-slash');
+            eyeIcon.classList.add('fa-eye');
+        } else {
+            eyeIcon.classList.remove('fa-eye');
+            eyeIcon.classList.add('fa-eye-slash');
+        }
     }
 
     // Password strength indicator

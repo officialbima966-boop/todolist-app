@@ -30,40 +30,90 @@ if ($userData['role'] == 'admin') {
     exit;
 }
 
-// Hitung total tugas user
-$totalTasksQuery = $mysqli->prepare("SELECT COUNT(*) as total FROM tasks WHERE assigned_users LIKE ?");
+// Hitung total tugas user (baik yang ditugaskan maupun dibuat)
+$totalTasksQuery = $mysqli->prepare("
+    SELECT COUNT(*) as total FROM tasks 
+    WHERE assigned_users LIKE ? OR created_by = ?
+");
 $searchUsername = "%$username%";
-$totalTasksQuery->bind_param("s", $searchUsername);
+$totalTasksQuery->bind_param("ss", $searchUsername, $username);
 $totalTasksQuery->execute();
 $totalTasksResult = $totalTasksQuery->get_result();
 $totalTasks = $totalTasksResult->fetch_assoc()['total'];
 
-// Hitung tugas belum selesai (todo + progress)
-$todoProgressQuery = $mysqli->prepare("SELECT COUNT(*) as total FROM tasks WHERE assigned_users LIKE ? AND status IN ('todo', 'progress')");
-$todoProgressQuery->bind_param("s", $searchUsername);
-$todoProgressQuery->execute();
-$todoProgressResult = $todoProgressQuery->get_result();
-$todoProgressCount = $todoProgressResult->fetch_assoc()['total'];
+// Hitung tugas sedang dikerjakan (progress)
+$progressQuery = $mysqli->prepare("
+    SELECT COUNT(*) as total FROM tasks 
+    WHERE (assigned_users LIKE ? OR created_by = ?) AND status = 'progress'
+");
+$progressQuery->bind_param("ss", $searchUsername, $username);
+$progressQuery->execute();
+$progressResult = $progressQuery->get_result();
+$progressCount = $progressResult->fetch_assoc()['total'];
+
+// Hitung tugas belum dikerjakan (todo)
+$todoQuery = $mysqli->prepare("
+    SELECT COUNT(*) as total FROM tasks 
+    WHERE (assigned_users LIKE ? OR created_by = ?) AND status = 'todo'
+");
+$todoQuery->bind_param("ss", $searchUsername, $username);
+$todoQuery->execute();
+$todoResult = $todoQuery->get_result();
+$todoCount = $todoResult->fetch_assoc()['total'];
 
 // Hitung tugas selesai
-$completedQuery = $mysqli->prepare("SELECT COUNT(*) as total FROM tasks WHERE assigned_users LIKE ? AND status = 'completed'");
-$completedQuery->bind_param("s", $searchUsername);
+$completedQuery = $mysqli->prepare("
+    SELECT COUNT(*) as total FROM tasks 
+    WHERE (assigned_users LIKE ? OR created_by = ?) AND status = 'completed'
+");
+$completedQuery->bind_param("ss", $searchUsername, $username);
 $completedQuery->execute();
 $completedResult = $completedQuery->get_result();
 $completedCount = $completedResult->fetch_assoc()['total'];
+
+// Hitung tugas yang dibuat oleh user
+$createdQuery = $mysqli->prepare("SELECT COUNT(*) as total FROM tasks WHERE created_by = ?");
+$createdQuery->bind_param("s", $username);
+$createdQuery->execute();
+$createdResult = $createdQuery->get_result();
+$createdCount = $createdResult->fetch_assoc()['total'];
 
 // Hitung total users
 $totalUsersQuery = $mysqli->query("SELECT COUNT(*) as total FROM users WHERE role != 'admin'");
 $totalUsers = $totalUsersQuery->fetch_assoc()['total'];
 
-// Ambil semua tugas untuk user (untuk filtering di frontend)
-$allTasksQuery = $mysqli->prepare("SELECT * FROM tasks WHERE assigned_users LIKE ? ORDER BY end_date ASC");
-$allTasksQuery->bind_param("s", $searchUsername);
+// Ambil SEMUA tugas untuk user (baik ditugaskan maupun dibuat) untuk ditampilkan
+$allTasksQuery = $mysqli->prepare("
+    SELECT * FROM tasks 
+    WHERE assigned_users LIKE ? OR created_by = ?
+    ORDER BY created_at DESC
+");
+$allTasksQuery->bind_param("ss", $searchUsername, $username);
 $allTasksQuery->execute();
 $allTasksResult = $allTasksQuery->get_result();
 $allTasks = [];
+$todayTasks = [];
+$upcomingTasks = [];
+
+$today = date('Y-m-d');
+$todayStart = $today . ' 00:00:00';
+$todayEnd = $today . ' 23:59:59';
+
 while ($row = $allTasksResult->fetch_assoc()) {
     $allTasks[] = $row;
+    
+    // Pisahkan tugas berdasarkan tanggal untuk filter
+    $taskDate = $row['end_date'];
+    $taskStatus = $row['status'];
+    
+    // Tugas hari ini (deadline hari ini dan belum selesai)
+    if ($taskDate == $today && $taskStatus !== 'completed') {
+        $todayTasks[] = $row;
+    }
+    // Tugas mendatang (deadline setelah hari ini dan belum selesai)
+    elseif ($taskDate > $today && $taskStatus !== 'completed') {
+        $upcomingTasks[] = $row;
+    }
 }
 ?>
 
@@ -71,11 +121,12 @@ while ($row = $allTasksResult->fetch_assoc()) {
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard - <?= htmlspecialchars($userData['name']) ?></title>
+    <title>Dashboard - <?= htmlspecialchars($userData['name'] ?? $userData['username']) ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
+        /* CSS SAMA DENGAN SEBELUMNYA, TETAP SAMA */
         * {
             margin: 0;
             padding: 0;
@@ -216,16 +267,10 @@ while ($row = $allTasksResult->fetch_assoc()) {
             margin-bottom: 18px;
         }
 
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 14px;
-            margin: 0 0 12px 0;
-        }
-
+        /* Stats Grid */
         .stats-grid-three {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 14px;
         }
 
@@ -243,6 +288,8 @@ while ($row = $allTasksResult->fetch_assoc()) {
             align-items: center;
             justify-content: center;
             min-height: 160px;
+            cursor: pointer;
+            text-decoration: none;
         }
 
         .stat-card:hover {
@@ -415,6 +462,38 @@ while ($row = $allTasksResult->fetch_assoc()) {
             padding: 0;
         }
 
+        .task-menu-container {
+            position: relative;
+        }
+
+        .task-menu-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 10;
+            display: none;
+        }
+
+        .task-menu-dropdown button {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            border: none;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+            color: #374151;
+            font-size: 14px;
+        }
+
+        .task-menu-dropdown button:hover {
+            background: #f3f4f6;
+        }
+
         .task-footer {
             display: flex;
             align-items: center;
@@ -556,6 +635,32 @@ while ($row = $allTasksResult->fetch_assoc()) {
             background: #f3f4f6;
         }
 
+        /* Floating Add Button */
+        .floating-add-btn {
+            position: fixed;
+            right: 15px;
+            bottom: 80px;
+            background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 55px;
+            height: 55px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 6px 20px rgba(30, 58, 138, 0.4);
+            z-index: 99;
+            transition: all 0.3s ease;
+        }
+
+        .floating-add-btn:hover {
+            transform: scale(1.08);
+            box-shadow: 0 8px 25px rgba(30, 58, 138, 0.5);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
@@ -609,12 +714,7 @@ while ($row = $allTasksResult->fetch_assoc()) {
                 margin-bottom: 16px;
             }
 
-            .stats-grid {
-                gap: 12px;
-            }
-
             .stats-grid-three {
-                grid-template-columns: 1fr;
                 gap: 12px;
             }
 
@@ -765,11 +865,8 @@ while ($row = $allTasksResult->fetch_assoc()) {
                 margin-bottom: 14px;
             }
 
-            .stats-grid {
-                gap: 10px;
-            }
-
             .stats-grid-three {
+                grid-template-columns: repeat(2, 1fr);
                 gap: 10px;
             }
 
@@ -925,11 +1022,8 @@ while ($row = $allTasksResult->fetch_assoc()) {
                 margin-bottom: 12px;
             }
 
-            .stats-grid {
-                gap: 8px;
-            }
-
             .stats-grid-three {
+                grid-template-columns: 1fr;
                 gap: 8px;
             }
 
@@ -1058,53 +1152,42 @@ while ($row = $allTasksResult->fetch_assoc()) {
 
         <!-- Stats Section -->
         <div class="stats-section">
-            <h3 class="stats-title">Anda Memiliki</h3>
+            <h3 class="stats-title"><?= htmlspecialchars($userData['nama'] ?? $userData['username']) ?></h3>
             <p class="total-tugas-label">total <?= $totalTasks ?> tugas</p>
             
-            <!-- Stats Grid 2 Column -->
-            <div class="stats-grid">
-                <div class="stat-card blue">
-                    <div class="stat-icon">
-                        <i class="fas fa-clipboard-list"></i>
-                        <span>Tugas Dikerjakan</span>
-                    </div>
-                    <div class="stat-number"><?= $todoProgressCount ?></div>
-                </div>
-                
-                <div class="stat-card green">
+            <!-- Stats Grid 4 Card (2x2) -->
+            <div class="stats-grid-three">
+                <a class="stat-card green" href="tasks.php?filter=completed">
                     <div class="stat-icon">
                         <i class="fas fa-check-circle"></i>
                         <span>Tugas Selesai</span>
                     </div>
                     <div class="stat-number"><?= $completedCount ?></div>
-                </div>
-            </div>
+                </a>
 
-            <!-- Stats Grid 3 Column -->
-            <div class="stats-grid-three">
-                <div class="stat-card yellow">
+                <a class="stat-card yellow" href="tasks.php">
                     <div class="stat-icon">
                         <i class="fas fa-clipboard-list"></i>
                         <span>Tugas Dibuat</span>
                     </div>
-                    <div class="stat-number"><?= $totalTasks ?></div>
-                </div>
-                
-                <div class="stat-card red">
+                    <div class="stat-number"><?= $createdCount ?></div>
+                </a>
+
+                <a class="stat-card red" href="tasks.php?filter=todo">
                     <div class="stat-icon">
                         <i class="fas fa-clipboard"></i>
                         <span>Belum Dikerjakan</span>
                     </div>
-                    <div class="stat-number"><?= $todoProgressCount ?></div>
-                </div>
+                    <div class="stat-number"><?= $todoCount ?></div>
+                </a>
 
-                <div class="stat-card white">
+                <a class="stat-card white" href="users.php">
                     <div class="stat-icon">
                         <i class="fas fa-users"></i>
                         <span>Total User</span>
                     </div>
                     <div class="stat-number"><?= $totalUsers ?></div>
-                </div>
+                </a>
             </div>
         </div>
 
@@ -1113,15 +1196,20 @@ while ($row = $allTasksResult->fetch_assoc()) {
             <div class="section-header">
                 <h3>Tasks</h3>
                 <div class="filter-tabs">
-                    <button class="filter-tab active" data-status="all">Hari Ini</button>
-                    <button class="filter-tab" data-status="upcoming">Mendatang</button>
-                    <button class="filter-tab" data-status="completed">Selesai</button>
+                    <button class="filter-tab active" data-filter="all">All Task</button>
+                    <button class="filter-tab" data-filter="today">Hari Ini</button>
+                    <button class="filter-tab" data-filter="upcoming">Mendatang</button>
                 </div>
             </div>
             
             <div id="tasksContainer">
-                <?php if (!empty($allTasks)): ?>
-                    <?php foreach ($allTasks as $task): 
+                <?php 
+                // Default: tampilkan semua tugas
+                $tasksToShow = $allTasks;
+                ?>
+                
+                <?php if (!empty($tasksToShow)): ?>
+                    <?php foreach ($tasksToShow as $task): 
                         $categoryClass = '';
                         if ($task['status'] === 'progress') {
                             $categoryClass = 'sedang';
@@ -1130,20 +1218,50 @@ while ($row = $allTasksResult->fetch_assoc()) {
                         } else {
                             $categoryClass = 'belum';
                         }
+                        
+                        // Format tanggal untuk display
+                        $endDateFormatted = date('d M', strtotime($task['end_date']));
+                        $today = date('Y-m-d');
+                        $taskDate = $task['end_date'];
+                        
+                        // Tentukan tipe filter berdasarkan tanggal
+                        $filterType = 'all';
+                        if ($taskDate == $today && $task['status'] !== 'completed') {
+                            $filterType = 'today';
+                        } elseif ($taskDate > $today && $task['status'] !== 'completed') {
+                            $filterType = 'upcoming';
+                        }
+                        
+                        // Parse attachments untuk menghitung jumlah
+                        $attachmentsCount = 0;
+                        if (!empty($task['attachments'])) {
+                            $attachmentsData = json_decode($task['attachments'], true);
+                            if (is_array($attachmentsData)) {
+                                $attachmentsCount = count($attachmentsData);
+                            }
+                        }
                     ?>
                         <div class="task-card" 
                              data-filter="task-card" 
                              data-status="<?= $task['status'] ?>" 
                              data-end-date="<?= $task['end_date'] ?>"
-                             onclick="window.location.href='task_detail.php?id=<?= $task['id'] ?>'">
+                             data-filter-type="<?= $filterType ?>"
+                             onclick="window.location.href='tasks.php'">
                             <div class="task-header">
                                 <div>
-                                    <div class="task-category <?= $categoryClass ?>"><?= ucfirst($task['category']) ?></div>
+                                    <div class="task-category <?= $categoryClass ?>">
+                                        <?php 
+                                        if ($task['status'] === 'progress') {
+                                            echo 'Sedang Berjalan';
+                                        } elseif ($task['status'] === 'completed') {
+                                            echo 'Selesai';
+                                        } else {
+                                            echo 'Belum Dikerjakan';
+                                        }
+                                        ?>
+                                    </div>
                                     <div class="task-title"><?= htmlspecialchars($task['title']) ?></div>
                                 </div>
-                                <button class="task-menu" onclick="event.stopPropagation()">
-                                    <i class="fas fa-ellipsis-v"></i>
-                                </button>
                             </div>
                             
                             <!-- Progress Bar -->
@@ -1161,11 +1279,15 @@ while ($row = $allTasksResult->fetch_assoc()) {
                                 </div>
                                 <div class="task-icon-item">
                                     <i class="far fa-comment"></i>
-                                    <span><?= $task['comments'] ?></span>
+                                    <span><?= $task['comments'] ?? 0 ?></span>
+                                </div>
+                                <div class="task-icon-item">
+                                    <i class="fas fa-paperclip"></i>
+                                    <span><?= $attachmentsCount ?></span>
                                 </div>
                                 <div class="task-date">
                                     <i class="far fa-calendar"></i>
-                                    <span><?= date('d M', strtotime($task['end_date'])) ?></span>
+                                    <span><?= $endDateFormatted ?></span>
                                 </div>
                             </div>
                         </div>
@@ -1180,7 +1302,9 @@ while ($row = $allTasksResult->fetch_assoc()) {
         </div>
     </div>
 
-    <!-- Bottom Navigation - SAMA PERSIS DENGAN TASKS.PHP -->
+
+
+    <!-- Bottom Navigation -->
     <div class="bottom-nav">
         <a href="dashboard.php" class="active">
             <i class="fa-solid fa-house"></i>
@@ -1205,48 +1329,39 @@ while ($row = $allTasksResult->fetch_assoc()) {
         const searchInput = document.getElementById('searchInput');
         const tasksContainer = document.getElementById('tasksContainer');
         const filterTabs = document.querySelectorAll('.filter-tab');
-
-        function getTodayDateString() {
-            const today = new Date();
-            const year = today.getFullYear();
-            const month = String(today.getMonth() + 1).padStart(2, '0');
-            const day = String(today.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        }
+        const taskCards = tasksContainer.querySelectorAll('[data-filter="task-card"]');
 
         function filterTasks() {
             const searchTerm = searchInput.value.toLowerCase();
             const activeTab = document.querySelector('.filter-tab.active');
-            const filterType = activeTab ? activeTab.getAttribute('data-status') : 'all';
-            const today = getTodayDateString();
-            const taskCards = tasksContainer.querySelectorAll('[data-filter="task-card"]');
+            const filterType = activeTab ? activeTab.getAttribute('data-filter') : 'all';
             
             taskCards.forEach(card => {
                 const title = card.querySelector('.task-title').textContent.toLowerCase();
-                const status = card.getAttribute('data-status');
-                const endDate = card.getAttribute('data-end-date');
+                const cardFilterType = card.getAttribute('data-filter-type');
                 
                 // Search filter
                 const matchesSearch = title.includes(searchTerm);
                 
-                // Date filter
-                let matchesFilter = true;
-                if (filterType === 'today') {
-                    // Tasks due today
-                    matchesFilter = endDate === today && status !== 'completed';
-                } else if (filterType === 'upcoming') {
-                    // Tasks due in the future
-                    matchesFilter = endDate > today && status !== 'completed';
-                } else if (filterType === 'completed') {
-                    // Completed tasks
-                    matchesFilter = status === 'completed';
-                } else if (filterType === 'all') {
-                    // All tasks
+                // Tab filter
+                let matchesFilter = false;
+                if (filterType === 'all') {
                     matchesFilter = true;
+                } else if (filterType === 'today') {
+                    matchesFilter = cardFilterType === 'today';
+                } else if (filterType === 'upcoming') {
+                    matchesFilter = cardFilterType === 'upcoming';
                 }
                 
                 card.style.display = (matchesSearch && matchesFilter) ? 'block' : 'none';
             });
+            
+            // Check if no tasks visible
+            const visibleTasks = Array.from(taskCards).filter(card => card.style.display !== 'none');
+            if (visibleTasks.length === 0) {
+                // Show empty state or message
+                console.log('No tasks match the filter');
+            }
         }
 
         searchInput.addEventListener('input', filterTasks);
@@ -1259,6 +1374,9 @@ while ($row = $allTasksResult->fetch_assoc()) {
                 filterTasks();
             });
         });
+
+        // Initial filter
+        filterTasks();
     </script>
 </body>
 </html>
