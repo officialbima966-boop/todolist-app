@@ -3,11 +3,8 @@ session_start();
 require_once "../inc/koneksi.php";
 
 // Load notification handler jika ada (opsional untuk sementara)
-$notificationEnabled = false;
-if (file_exists("../inc/notification_handler.php")) {
-    require_once "../inc/notification_handler.php";
-    $notificationEnabled = true;
-}
+$notificationEnabled = true; // Functions embedded in this file
+// Notification functions are embedded below (no external file needed)
 
 // Suppress PHP warnings/notices to prevent JSON corruption
 error_reporting(E_ERROR | E_PARSE);
@@ -30,6 +27,83 @@ if ($taskId <= 0) {
 }
 
 // Ambil data user yang login
+// ============================================================
+// NOTIFICATION FUNCTIONS (EMBEDDED)
+// ============================================================
+
+/**
+ * Kirim notifikasi ke user(s)
+ */
+function sendNotification($mysqli, $taskId, $type, $message, $fromUser, $excludeUser = null) {
+    // Ambil task info
+    $taskQuery = $mysqli->query("SELECT created_by, assigned_users FROM tasks WHERE id = $taskId");
+    
+    if (!$taskQuery) {
+        return 0;
+    }
+    
+    $task = $taskQuery->fetch_assoc();
+    if (!$task) {
+        return 0;
+    }
+    
+    $creator = $task['created_by'];
+    $assignedUsers = $task['assigned_users'] ? explode(',', $task['assigned_users']) : [];
+    
+    // Build recipient list
+    $recipients = [];
+    
+    // 1. Tambahkan semua assigned users
+    foreach ($assignedUsers as $user) {
+        $user = trim($user);
+        if (!empty($user)) {
+            $recipients[] = $user;
+        }
+    }
+    
+    // 2. Tambahkan creator jika belum ada di list
+    if (!in_array($creator, $recipients)) {
+        $recipients[] = $creator;
+    }
+    
+    // 3. Remove excludeUser (biasanya yang melakukan aksi)
+    if ($excludeUser) {
+        $recipients = array_filter($recipients, function($user) use ($excludeUser) {
+            return $user !== $excludeUser;
+        });
+    }
+    
+    // 4. Remove duplicates
+    $recipients = array_unique($recipients);
+    
+    // Send notification to each recipient
+    $sentCount = 0;
+    $messageEscaped = $mysqli->real_escape_string($message);
+    $typeEscaped = $mysqli->real_escape_string($type);
+    $fromUserEscaped = $mysqli->real_escape_string($fromUser);
+    
+    foreach ($recipients as $recipient) {
+        $recipient = trim($recipient);
+        if (empty($recipient)) continue;
+        
+        $recipientEscaped = $mysqli->real_escape_string($recipient);
+        
+        $sql = "INSERT INTO notifications (username, task_id, type, message, from_user, created_at, is_read) 
+                VALUES ('$recipientEscaped', $taskId, '$typeEscaped', '$messageEscaped', '$fromUserEscaped', NOW(), 0)";
+        
+        if ($mysqli->query($sql)) {
+            $sentCount++;
+        }
+    }
+    
+    return $sentCount;
+}
+
+// ============================================================
+// END NOTIFICATION FUNCTIONS
+// ============================================================
+
+
 if ($isAdmin) {
     $userQuery = $mysqli->query("SELECT * FROM admin WHERE username = '$username'");
 } else {
@@ -451,11 +525,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $subtasksEncoded = $mysqli->real_escape_string($subtasksJson);
             $mysqli->query("UPDATE tasks SET subtasks = '$subtasksEncoded' WHERE id = $taskId");
 
-            // Calculate progress - revalidate each subtask completion
-            $total = count($subtasks);
-            $completed = 0;
+            // Calculate progress - HANYA hitung subtask yang punya assigned users
+            $totalAssignedSubtasks = 0;
+            $completedAssignedSubtasks = 0;
             
-            foreach ($subtasks as $subtask) {
+            // DEBUG: Log subtasks data
+            error_log("DEBUG - Total subtasks: " . count($subtasks));
+            
+            foreach ($subtasks as $idx => $subtask) {
+                error_log("DEBUG - Subtask #$idx: " . json_encode($subtask));
                 // Parse assigned users
                 $stAssignedUsers = [];
                 if (isset($subtask['assigned'])) {
@@ -473,26 +551,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
                 $stAssignedUsers = array_filter($stAssignedUsers);
                 
-                // Parse completed_by
-                $stCompletedBy = [];
-                if (isset($subtask['completed_by'])) {
-                    if (is_array($subtask['completed_by'])) {
-                        $stCompletedBy = array_map(function($u) {
-                            return is_string($u) ? trim($u) : trim((string)$u);
-                        }, $subtask['completed_by']);
-                    } else if (!empty($subtask['completed_by'])) {
-                        $stCompletedBy = array_map('trim', explode(',', $subtask['completed_by']));
-                    }
-                }
-                $stCompletedBy = array_filter($stCompletedBy);
+                error_log("DEBUG - Subtask #$idx assigned: " . json_encode($stAssignedUsers));
                 
-                // Check if all assigned users completed
-                if (count($stAssignedUsers) > 0 && count(array_diff($stAssignedUsers, $stCompletedBy)) === 0) {
-                    $completed++;
+                // HANYA hitung subtask yang punya assigned user
+                if (count($stAssignedUsers) > 0) {
+                    $totalAssignedSubtasks++;
+                    
+                    // Parse completed_by
+                    $stCompletedBy = [];
+                    if (isset($subtask['completed_by'])) {
+                        if (is_array($subtask['completed_by'])) {
+                            $stCompletedBy = array_map(function($u) {
+                                return is_string($u) ? trim($u) : trim((string)$u);
+                            }, $subtask['completed_by']);
+                        } else if (!empty($subtask['completed_by'])) {
+                            $stCompletedBy = array_map('trim', explode(',', $subtask['completed_by']));
+                        }
+                    }
+                    $stCompletedBy = array_filter($stCompletedBy);
+                    
+                    error_log("DEBUG - Subtask #$idx completed_by: " . json_encode($stCompletedBy));
+                    
+                    // Check if all assigned users completed
+                    if (count(array_diff($stAssignedUsers, $stCompletedBy)) === 0) {
+                        $completedAssignedSubtasks++;
+                        error_log("DEBUG - Subtask #$idx COMPLETED!");
+                    } else {
+                        error_log("DEBUG - Subtask #$idx NOT completed, missing: " . json_encode(array_diff($stAssignedUsers, $stCompletedBy)));
+                    }
                 }
             }
             
+            // Jika ada subtask dengan assigned users, hitung progress dari mereka saja
+            // Jika tidak ada, hitung dari semua subtask
+            $total = $totalAssignedSubtasks > 0 ? $totalAssignedSubtasks : count($subtasks);
+            $completed = $totalAssignedSubtasks > 0 ? $completedAssignedSubtasks : 0;
             $progress = $total > 0 ? round(($completed / $total) * 100) : 0;
+            
+            error_log("DEBUG - FINAL: totalAssignedSubtasks=$totalAssignedSubtasks, completedAssignedSubtasks=$completedAssignedSubtasks");
+            error_log("DEBUG - FINAL: total=$total, completed=$completed, progress=$progress%");
 
             $category = 'Belum Dijalankan';
             $status = 'todo';
@@ -1524,9 +1621,23 @@ function formatTimeAgo($dateString) {
         font-size: 12px;
     }
     
-    .comment-edit-form {
+        .comment-edit-form {
         padding-left: 40px;
         margin-top: 8px;
+    }
+    
+    /* Hidden by default via inline style */
+    .comment-edit-form[style*="display: none"] {
+        display: none;
+    }
+    
+    /* Show when display is set to block */
+    .comment-edit-form[style*="display: block"] {
+        display: block;
+    }
+    
+    .comment-text[style*="display: none"] {
+        display: none;
     }
     
     .comment-edit-input {
@@ -2177,7 +2288,7 @@ function formatTimeAgo($dateString) {
                         echo '</button>';
                         echo '<div class="comment-menu-dropdown" id="commentMenu-' . $commentId . '">';
                         
-                        if ($isOwner) {
+                        if ($isOwner || $isAdmin) {
                             echo '<a href="#" onclick="editComment(event, ' . $commentId . ', \'' . htmlspecialchars(addslashes($comment['comment'])) . '\')" class="comment-menu-item">';
                             echo '<i class="fas fa-edit"></i> Edit';
                             echo '</a>';
@@ -2197,8 +2308,8 @@ function formatTimeAgo($dateString) {
                     echo '<div class="comment-edit-form" id="commentEditForm-' . $commentId . '" style="display: none;">';
                     echo '<input type="text" class="comment-edit-input" id="commentEditInput-' . $commentId . '" value="' . htmlspecialchars($comment['comment']) . '">';
                     echo '<div class="comment-edit-actions">';
-                    echo '<button class="btn-save" onclick="saveEditComment(' . $commentId . ')">Simpan</button>';
-                    echo '<button class="btn-cancel" onclick="cancelEditComment(' . $commentId . ')">Batal</button>';
+                    echo '<button type="button" class="btn-save" onclick="saveEditComment(' . $commentId . '); return false;">Simpan</button>';
+                    echo '<button type="button" class="btn-cancel" onclick="cancelEditComment(' . $commentId . '); return false;">Batal</button>';
                     echo '</div>';
                     echo '</div>';
                     echo '</div>';
@@ -2256,10 +2367,12 @@ function formatTimeAgo($dateString) {
             formData.append('taskId', currentTaskId);
             formData.append('progress', progress);
 
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
 
             const result = await response.json();
 
@@ -2295,10 +2408,12 @@ function formatTimeAgo($dateString) {
             formData.append('taskId', currentTaskId);
             formData.append('comment', comment);
 
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
 
             const result = await response.json();
 
@@ -2353,6 +2468,7 @@ function formatTimeAgo($dateString) {
     // Edit comment - MUST BE GLOBAL
     window.editComment = function(event, commentId, currentComment) {
         event.preventDefault();
+        console.log('[EDIT] Comment ID:', commentId);
         
         // Hide menu
         const menu = document.getElementById(`commentMenu-${commentId}`);
@@ -2364,9 +2480,19 @@ function formatTimeAgo($dateString) {
         const textEl = document.getElementById(`commentText-${commentId}`);
         const formEl = document.getElementById(`commentEditForm-${commentId}`);
         
+        console.log('[EDIT] Text element:', textEl);
+        console.log('[EDIT] Form element:', formEl);
+        
         if (textEl && formEl) {
+            console.log('[EDIT] Before - Text display:', textEl.style.display);
+            console.log('[EDIT] Before - Form display:', formEl.style.display);
+            
             textEl.style.display = 'none';
             formEl.style.display = 'block';
+            
+            console.log('[EDIT] After - Text display:', textEl.style.display);
+            console.log('[EDIT] After - Form display:', formEl.style.display);
+            console.log('[EDIT] Form visible?', formEl.offsetParent !== null);
             
             // Focus on input
             const input = document.getElementById(`commentEditInput-${commentId}`);
@@ -2374,13 +2500,28 @@ function formatTimeAgo($dateString) {
                 input.focus();
                 input.select();
             }
+        } else {
+            console.error('[EDIT ERROR] Elements not found!');
+            if (!textEl) console.error('[EDIT ERROR] Text element missing for ID:', commentId);
+            if (!formEl) console.error('[EDIT ERROR] Form element missing for ID:', commentId);
         }
     };
     
     // Save edited comment - MUST BE GLOBAL
     window.saveEditComment = async function(commentId) {
+        console.log('[SAVE] Starting save for comment ID:', commentId);
+        
         const input = document.getElementById(`commentEditInput-${commentId}`);
+        console.log('[SAVE] Input element:', input);
+        
+        if (!input) {
+            console.error('[SAVE ERROR] Input element not found!');
+            alert('Error: Input tidak ditemukan untuk comment ID: ' + commentId);
+            return;
+        }
+        
         const newComment = input.value.trim();
+        console.log('[SAVE] New comment value:', newComment);
         
         if (!newComment) {
             alert('Komentar tidak boleh kosong');
@@ -2393,10 +2534,12 @@ function formatTimeAgo($dateString) {
             formData.append('commentId', commentId);
             formData.append('comment', newComment);
             
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
             
             // Cek apakah response OK
             if (!response.ok) {
@@ -2417,8 +2560,32 @@ function formatTimeAgo($dateString) {
             }
             
             if (result.success) {
-                // Trigger polling untuk update UI
-                await pollComments();
+                console.log('[SAVE SUCCESS] Comment updated successfully');
+                
+                // Update UI immediately
+                const textEl = document.getElementById(`commentText-${commentId}`);
+                const formEl = document.getElementById(`commentEditForm-${commentId}`);
+                
+                if (textEl && formEl) {
+                    console.log('[SAVE] Updating UI...');
+                    textEl.textContent = newComment;
+                    textEl.style.display = 'block';
+                    formEl.style.display = 'none';
+                    console.log('[SAVE] UI updated - form hidden, text shown');
+                }
+                
+                // Trigger polling untuk refresh dari server
+                console.log('[SAVE] Triggering pollComments...');
+                if (typeof pollComments === 'function') {
+                    try {
+                        await pollComments();
+                        console.log('[SAVE] pollComments completed');
+                    } catch (pollError) {
+                        console.warn('[SAVE] pollComments error:', pollError);
+                    }
+                } else {
+                    console.warn('[SAVE] pollComments not available');
+                }
             } else {
                 // Show detailed error
                 let errorMsg = 'Gagal mengedit komentar:\n' + (result.error || 'Unknown error');
@@ -2465,10 +2632,12 @@ function formatTimeAgo($dateString) {
             formData.append('commentId', commentId);
             formData.append('taskId', currentTaskId);
             
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -2486,8 +2655,28 @@ function formatTimeAgo($dateString) {
             }
             
             if (result.success) {
-                // Trigger polling untuk update UI
-                await pollComments();
+                console.log('[DELETE SUCCESS] Comment deleted successfully');
+                
+                // Remove comment element from DOM immediately
+                const commentEl = document.getElementById(`comment-${commentId}`);
+                if (commentEl) {
+                    console.log('[DELETE] Removing comment element from DOM...');
+                    commentEl.remove();
+                    console.log('[DELETE] Comment element removed');
+                }
+                
+                // Trigger polling untuk refresh dari server
+                console.log('[DELETE] Triggering pollComments...');
+                if (typeof pollComments === 'function') {
+                    try {
+                        await pollComments();
+                        console.log('[DELETE] pollComments completed');
+                    } catch (pollError) {
+                        console.warn('[DELETE] pollComments error:', pollError);
+                    }
+                } else {
+                    console.warn('[DELETE] pollComments not available');
+                }
             } else {
                 // Show detailed error
                 let errorMsg = 'Gagal menghapus komentar:\n' + (result.error || 'Unknown error');
@@ -2540,7 +2729,7 @@ function formatTimeAgo($dateString) {
                             <div class="comment-username">${escapeHtml(comment.username)}</div>
                         </div>
                         <div class="comment-actions">
-                            <div class="comment-time">${timeAgo}</div>
+                            <div class="comment-time" data-created-at="${comment.created_at}">${timeAgo}</div>
                             ${showMenu ? `
                                 <div class="comment-menu">
                                     <button class="comment-menu-btn" onclick="toggleCommentMenu(event, ${comment.id})">
@@ -2566,8 +2755,8 @@ function formatTimeAgo($dateString) {
                     <div class="comment-edit-form" id="commentEditForm-${comment.id}" style="display: none;">
                         <input type="text" class="comment-edit-input" id="commentEditInput-${comment.id}" value="${escapeHtml(comment.comment)}">
                         <div class="comment-edit-actions">
-                            <button class="btn-save" onclick="saveEditComment(${comment.id})">Simpan</button>
-                            <button class="btn-cancel" onclick="cancelEditComment(${comment.id})">Batal</button>
+                            <button type="button" class="btn-save" onclick="saveEditComment(${comment.id}); return false;">Simpan</button>
+                            <button type="button" class="btn-cancel" onclick="cancelEditComment(${comment.id}); return false;">Batal</button>
                         </div>
                     </div>
                 </div>
@@ -2590,13 +2779,40 @@ function formatTimeAgo($dateString) {
         const now = new Date();
         const diff = Math.floor((now - date) / 1000); // seconds
         
-        if (diff < 60) return 'Baru saja';
-        if (diff < 3600) return Math.floor(diff / 60) + ' menit yang lalu';
-        if (diff < 86400) return Math.floor(diff / 3600) + ' jam yang lalu';
-        if (diff < 2592000) return Math.floor(diff / 86400) + ' hari yang lalu';
-        if (diff < 31536000) return Math.floor(diff / 2592000) + ' bulan yang lalu';
-        return Math.floor(diff / 31536000) + ' tahun yang lalu';
+        if (diff < 10) return 'Baru saja';
+        if (diff < 60) return diff + ' detik yang lalu';
+        if (diff < 3600) {
+            const minutes = Math.floor(diff / 60);
+            return minutes + ' menit yang lalu';
+        }
+        if (diff < 86400) {
+            const hours = Math.floor(diff / 3600);
+            return hours + ' jam yang lalu';
+        }
+        if (diff < 2592000) {
+            const days = Math.floor(diff / 86400);
+            return days + ' hari yang lalu';
+        }
+        if (diff < 31536000) {
+            const months = Math.floor(diff / 2592000);
+            return months + ' bulan yang lalu';
+        }
+        const years = Math.floor(diff / 31536000);
+        return years + ' tahun yang lalu';
     }
+    
+    // Fungsi untuk update waktu relatif secara otomatis
+    function updateAllCommentTimes() {
+        document.querySelectorAll('.comment-time').forEach(timeElement => {
+            const createdAt = timeElement.getAttribute('data-created-at');
+            if (createdAt) {
+                timeElement.textContent = formatTimeAgo(createdAt);
+            }
+        });
+    }
+    
+    // Update waktu setiap 60 detik
+    setInterval(updateAllCommentTimes, 60000);
     
     // Polling untuk update comments otomatis
     async function pollComments() {
@@ -2605,10 +2821,12 @@ function formatTimeAgo($dateString) {
             formData.append('action', 'get_comments');
             formData.append('taskId', currentTaskId);
             
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
             
             const result = await response.json();
             
@@ -2738,10 +2956,12 @@ function formatTimeAgo($dateString) {
             formData.append('username', username);
             formData.append('taskId', currentTaskId);
 
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
 
             const result = await response.json();
 
@@ -2786,10 +3006,12 @@ function formatTimeAgo($dateString) {
             formData.append('action', 'get_task_data');
             formData.append('taskId', currentTaskId);
 
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
 
             const result = await response.json();
 
@@ -2910,10 +3132,12 @@ function formatTimeAgo($dateString) {
         }
 
         try {
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
 
             const result = await response.json();
 
@@ -3029,16 +3253,18 @@ function formatTimeAgo($dateString) {
             formData.append('action', 'delete_task');
             formData.append('taskId', currentTaskId);
             
+            console.log('[SAVE] Sending request to server...');
             const response = await fetch('', {
                 method: 'POST',
                 body: formData
             });
+            console.log('[SAVE] Response received, status:', response.status);
             
             const result = await response.json();
             
             if (result.success) {
                 alert('Tugas berhasil dihapus!');
-                window.location.href = 'tasks.php';
+                window.location.href = 'tasks.php';g
             } else {
                 alert('Gagal menghapus tugas: ' + result.error);
             }

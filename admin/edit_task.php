@@ -2406,20 +2406,180 @@ function getMimeTypeFromExtension($filename) {
             input.focus();
             input.select();
         }
+function addUserToSubtask(index) {
+            // Create modal overlay
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                z-index: 1000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            `;
 
-        function addUserToSubtask(index) {
-            const userName = prompt('Masukkan nama user untuk ditambahkan:');
-            if (userName && userName.trim()) {
-                const current = subtasks[index].assigned || '';
-                const users = current ? current.split(',').map(u => u.trim()).filter(u => u) : [];
-                
-                if (!users.includes(userName.trim())) {
-                    users.push(userName.trim());
-                    subtasks[index].assigned = users.join(',');
+            // Create modal content
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                background: white;
+                border-radius: 16px;
+                padding: 24px;
+                max-width: 400px;
+                width: 100%;
+                max-height: 80vh;
+                overflow-y: auto;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            `;
+
+            // Get current assigned users for this subtask
+            const current = subtasks[index].assigned || '';
+            const assignedUsers = current ? current.split(',').map(u => u.trim()).filter(u => u) : [];
+
+            // Create modal HTML
+            modal.innerHTML = `
+                <div style="margin-bottom: 20px;">
+                    <h3 style="font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 8px;">
+                        <i class="fas fa-user-plus" style="color: #4F46E5; margin-right: 8px;"></i>
+                        Pilih User untuk Subtask
+                    </h3>
+                    <p style="font-size: 14px; color: #6b7280;">Pilih user yang akan ditugaskan</p>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <input type="text" id="searchUser" placeholder="Cari user..." 
+                        style="width: 100%; padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 14px;">
+                </div>
+
+                <div id="userListModal" style="margin-bottom: 20px; max-height: 300px; overflow-y: auto;">
+                    <!-- User list will be inserted here -->
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" id="cancelBtn" style="padding: 10px 20px; background: white; border: 2px solid #e5e7eb; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                        Batal
+                    </button>
+                    <button type="button" id="saveBtn" style="padding: 10px 20px; background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                        Simpan
+                    </button>
+                </div>
+            `;
+
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            // Get available users (from assigned users list)
+            const availableUsers = Array.from(selectedUsers);
+
+            let selectedUserInModal = null;
+
+            // Render user list
+            function renderUserList(searchTerm = '') {
+                const userList = modal.querySelector('#userListModal');
+                userList.innerHTML = '';
+
+                const filteredUsers = availableUsers.filter(user => 
+                    user.toLowerCase().includes(searchTerm.toLowerCase())
+                );
+
+                if (filteredUsers.length === 0) {
+                    userList.innerHTML = '<div style="text-align: center; padding: 20px; color: #9ca3af;">Tidak ada user ditemukan</div>';
+                    return;
+                }
+
+                filteredUsers.forEach(user => {
+                    const isAlreadyAssigned = assignedUsers.includes(user);
+                    
+                    const userItem = document.createElement('div');
+                    userItem.style.cssText = `
+                        display: flex;
+                        align-items: center;
+                        padding: 12px;
+                        background: ${isAlreadyAssigned ? '#f3f4f6' : 'white'};
+                        border: 2px solid #e5e7eb;
+                        border-radius: 10px;
+                        margin-bottom: 8px;
+                        cursor: ${isAlreadyAssigned ? 'not-allowed' : 'pointer'};
+                        transition: all 0.2s;
+                        opacity: ${isAlreadyAssigned ? '0.6' : '1'};
+                    `;
+
+                    if (!isAlreadyAssigned) {
+                        userItem.onmouseover = () => {
+                            userItem.style.borderColor = '#4F46E5';
+                            userItem.style.background = '#f9fafb';
+                        };
+                        userItem.onmouseout = () => {
+                            if (selectedUserInModal !== user) {
+                                userItem.style.borderColor = '#e5e7eb';
+                                userItem.style.background = 'white';
+                            }
+                        };
+                        userItem.onclick = () => {
+                            selectedUserInModal = user;
+                            renderUserList(searchTerm);
+                        };
+                    }
+
+                    if (selectedUserInModal === user) {
+                        userItem.style.background = 'linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%)';
+                        userItem.style.borderColor = '#4F46E5';
+                    }
+
+                    const initial = user.charAt(0).toUpperCase();
+                    userItem.innerHTML = `
+                        <div style="width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; margin-right: 12px;">
+                            ${initial}
+                        </div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 14px; font-weight: 600; color: #1f2937;">${escapeHtml(user)}</div>
+                            ${isAlreadyAssigned ? '<div style="font-size: 12px; color: #9ca3af;">Sudah ditambahkan</div>' : ''}
+                        </div>
+                        ${selectedUserInModal === user ? '<i class="fas fa-check" style="color: #4F46E5;"></i>' : ''}
+                    `;
+
+                    userList.appendChild(userItem);
+                });
+            }
+
+            // Initial render
+            renderUserList();
+
+            // Search functionality
+            const searchInput = modal.querySelector('#searchUser');
+            searchInput.addEventListener('input', (e) => {
+                renderUserList(e.target.value);
+            });
+
+            // Save button
+            modal.querySelector('#saveBtn').addEventListener('click', () => {
+                if (selectedUserInModal) {
+                    assignedUsers.push(selectedUserInModal);
+                    subtasks[index].assigned = assignedUsers.join(',');
                     updateSubtasks();
                     document.dispatchEvent(new Event('subtaskChanged'));
                 }
-            }
+                document.body.removeChild(overlay);
+            });
+
+            // Cancel button
+            modal.querySelector('#cancelBtn').addEventListener('click', () => {
+                document.body.removeChild(overlay);
+            });
+
+            // Close on overlay click
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    document.body.removeChild(overlay);
+                }
+            });
+
+            // Focus search input
+            searchInput.focus();
         }
 
         function removeUserFromSubtask(index, userName) {
