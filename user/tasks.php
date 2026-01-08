@@ -2654,7 +2654,7 @@ if (isset($_GET['filter'])) {
 
                         $assignedUsers = $task['assigned_users'] ? explode(',', $task['assigned_users']) : [];
                     ?>
-                        <div class="task-card" data-task-id="<?= $task['id'] ?>">
+                        <div class="task-card" data-task-id="<?= $task['id'] ?>" onclick="window.location.href='task_detail.php?id=<?= $task['id'] ?>'" style="cursor: pointer;">
                             <div class="task-card-header">
                                 <div style="flex: 1;">
                                     <div class="task-status-label <?= $statusClass ?>"><?= $statusLabel ?></div>
